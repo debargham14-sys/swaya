@@ -1,0 +1,17 @@
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+*.pyc
+.DS_Store
+vendor/
+
+# Large model weights (download separately; see models/*/README.md)
+models/**/*.pkl
+models/**/*.npz
+models/**/*.task
+models/**/*.zip
+
+# Local capture data and debug artifacts
+spike_data/user_capture/
+spike_data/**/debug/

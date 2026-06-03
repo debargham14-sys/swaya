@@ -2,15 +2,12 @@
 Markerless body-measurement estimator (no DSV vest).
 
 Inputs: front photo + side photo + height(cm) + weight(kg).
-Method:
-  1. segment the body in each view (GrabCut)
+Method (slice-sweep):
+  1. segment the body in each view (MediaPipe / GrabCut)
   2. height -> scale (cm per pixel) from silhouette stature
-  3. place bust/underbust/waist/hip lines by anthropometric stature fractions
-  4. per line: front WIDTH + side DEPTH (central torso run, arms excluded)
-  5. ellipse (Ramanujan) girth; weight/BMI used as prior + sanity bounds
-
-This is an APPROXIMATE estimator. Accuracy depends heavily on fitted clothing,
-frontal/true-side pose, and full-body framing.
+  3. sweep horizontal torso slices (shoulder..hip only; flare rows rejected)
+  4. per slice: front WIDTH + side DEPTH -> ellipse girth
+  5. pick bust / underbust / waist / hip from slice-curve extrema
 """
 
 from __future__ import annotations
@@ -24,8 +21,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+
+from pipeline.common.mask_ops import clean_mask as _clean_mask
 
 # Anthropometric landmark heights as fraction of stature measured FROM THE FLOOR.
 # (population averages; good enough to locate horizontal measurement lines)
@@ -92,54 +91,93 @@ _POSE_IDX = {
     "l_foot": 31,
     "r_foot": 32,
 }
+def _resolve_capture_path(path: str | Path) -> tuple[Path, str | None]:
+    """Prefer camera JPG over derived PNG when both exist (PNG breaks MediaPipe pose)."""
+    p = Path(path)
+    if p.suffix.lower() == ".png":
+        jpg = p.with_suffix(".jpg")
+        if jpg.is_file():
+            return jpg, f"used_jpg_sibling:{jpg.name}"
+    return p, None
+
+
+def _decode_pose_worker_payload(data: dict, img_shape: tuple[int, int], scale: float = 1.0):
+    import base64
+
+    landmarks = None
+    raw_lm = data.get("landmarks")
+    if raw_lm:
+        landmarks = {
+            k: (int(v[0] / scale), int(v[1] / scale))
+            for k, v in raw_lm.items()
+        }
+    mask = None
+    if data.get("mask_b64"):
+        arr = cv2.imdecode(
+            np.frombuffer(base64.b64decode(data["mask_b64"]), dtype=np.uint8),
+            cv2.IMREAD_GRAYSCALE,
+        )
+        if arr is not None:
+            if scale != 1.0:
+                h, w = img_shape[:2]
+                mask = cv2.resize(arr, (w, h), interpolation=cv2.INTER_LINEAR)
+            else:
+                mask = arr
+    return landmarks, mask
 
 
 def _run_pose_landmarker(img: np.ndarray):
     """Run Tasks PoseLandmarker once; returns (landmarks_dict_or_None, mask_or_None)."""
-    try:
-        import mediapipe as mp
-        from mediapipe.tasks import python as mptp
-        from mediapipe.tasks.python import vision
+    import os
+    import subprocess
+    import tempfile
 
-        base = mptp.BaseOptions(model_asset_path=str(_POSE_MODEL))
-        opts = vision.PoseLandmarkerOptions(
-            base_options=base,
-            running_mode=vision.RunningMode.IMAGE,
-            output_segmentation_masks=True,
-            num_poses=1,
+    def _call(bgr: np.ndarray, scale: float) -> tuple[dict | None, str | None]:
+        ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        if not ok:
+            return None, "encode_failed"
+        tmppath: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp.write(buf.tobytes())
+                tmppath = tmp.name
+            proc = subprocess.run(
+                [sys.executable, "-m", "pipeline.measure.pose_worker", tmppath],
+                capture_output=True,
+                text=True,
+                cwd=str(ROOT),
+                timeout=120,
+            )
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout or "worker_failed")[:240]
+                return None, err
+            return json.loads(proc.stdout.strip()), None
+        finally:
+            if tmppath:
+                try:
+                    os.unlink(tmppath)
+                except OSError:
+                    pass
+
+    last_err = "no_pose"
+    for scale in (1.0, 0.75):
+        bgr = img if scale == 1.0 else cv2.resize(
+            img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA,
         )
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        with vision.PoseLandmarker.create_from_options(opts) as lmk:
-            res = lmk.detect(mp_img)
-        h, w = img.shape[:2]
-        landmarks = None
-        if res.pose_landmarks:
-            lm = res.pose_landmarks[0]
-            landmarks = {
-                name: (int(lm[idx].x * w), int(lm[idx].y * h))
-                for name, idx in _POSE_IDX.items()
-            }
-        mask = None
-        if res.segmentation_masks:
-            m = res.segmentation_masks[0].numpy_view()
-            mask = (m > 0.5).astype(np.uint8) * 255
-        return landmarks, mask
-    except Exception as e:  # noqa: BLE001
-        return None, f"pose_error:{e}"
-
-
-def _clean_mask(m: np.ndarray) -> np.ndarray:
-    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((11, 11), np.uint8), 2)
-    num, labels, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
-    if num > 1:
-        best = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-        m = np.where(labels == best, 255, 0).astype(np.uint8)
-    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    filled = np.zeros_like(m)
-    cv2.drawContours(filled, cnts, -1, 255, -1)
-    return filled
+        try:
+            data, err = _call(bgr, scale)
+        except Exception as e:  # noqa: BLE001
+            data, err = None, str(e)
+        if not data or data.get("error"):
+            continue
+        landmarks, mask = _decode_pose_worker_payload(data, img.shape, scale)
+        if landmarks or mask is not None:
+            return landmarks, mask
+        if err:
+            last_err = err
+        else:
+            last_err = data.get("error", "no_pose")
+    return None, f"pose_error:{last_err}"
 
 
 def analyze_view(img: np.ndarray) -> tuple[np.ndarray, dict | None, str | None]:
@@ -242,7 +280,10 @@ def _load_profile_view(
     ref_marker_mm: float,
     res: MarkerlessResult,
 ) -> _ProfileView | None:
-    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    resolved, note = _resolve_capture_path(path)
+    if note:
+        res.warnings.append(f"{label}:{note}")
+    img = cv2.imread(str(resolved), cv2.IMREAD_COLOR)
     if img is None:
         res.warnings.append(f"{label}_unreadable")
         return None
@@ -253,7 +294,7 @@ def _load_profile_view(
     stat_px = max(1, bottom - top)
     cm_per_px: float | None
     if ref_kind:
-        from pipeline.scale_reference import detect_scale
+        from pipeline.measure.scale_reference import detect_scale
 
         sr = detect_scale(img, ref_kind, ref_marker_mm)
         if sr.cm_per_px:
@@ -308,7 +349,10 @@ def estimate(
       - ref_kind ('aruco'|'card'|'a4'): scale from a known object in the frame.
     weight_kg is optional (used only for BMI reporting).
     """
-    front = cv2.imread(str(front_path), cv2.IMREAD_COLOR)
+    front_resolved, front_note = _resolve_capture_path(front_path)
+    if front_note:
+        pass  # appended after MarkerlessResult exists
+    front = cv2.imread(str(front_resolved), cv2.IMREAD_COLOR)
     if front is None:
         raise FileNotFoundError(front_path)
     if height_cm is None and ref_kind is None:
@@ -318,6 +362,8 @@ def estimate(
         height_cm=height_cm or 0.0, weight_kg=weight_kg or 0.0, bmi=round(bmi, 1),
         cm_per_px_front=0.0, cm_per_px_side=None,
     )
+    if front_note:
+        res.warnings.append(f"front:{front_note}")
 
     fmask, fpose, fwarn = analyze_view(front)
     if fwarn:
@@ -328,7 +374,7 @@ def estimate(
 
     # ---- Scale: reference object takes priority over height ----
     if ref_kind:
-        from pipeline.scale_reference import detect_scale
+        from pipeline.measure.scale_reference import detect_scale
 
         sr = detect_scale(front, ref_kind, ref_marker_mm)
         if sr.cm_per_px:
@@ -354,9 +400,61 @@ def estimate(
     if not profiles:
         res.warnings.append("no_profile_views_depth_estimated_from_width")
     if fpose is None:
-        res.warnings.append("pose_not_detected_using_anthropometric_fractions")
+        res.warnings.append("pose_not_detected_slice_sweep_degraded")
 
-    # Determine each level's y by pose landmarks when available, else stature fraction.
+    side_pv = next((p for p in profiles if p.label == "side"), None)
+    from pipeline.measure.slice_measure import estimate_torso_girths
+
+    samples, girth_levels, sweep_warn = estimate_torso_girths(
+        fmask, fpose, fcx, res.cm_per_px_front, side_pv, res.cm_per_px_side,
+    )
+    res.warnings.extend(sweep_warn)
+
+    if len(girth_levels) >= 3:
+        res.levels = girth_levels
+    else:
+        res.warnings.append("slice_sweep:fallback_fixed_landmarks")
+        res.levels = _estimate_fixed_landmarks(
+            front, fmask, fpose, ft, fb, f_stat_px, fcx, res, profiles,
+        )
+
+    if debug_dir is not None:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        ov = front.copy()
+        for s in samples:
+            color = (0, 0, 255) if s.flare else (80, 80, 80)
+            cv2.line(ov, (0, s.y), (ov.shape[1], s.y), color, 1)
+        for lv in res.levels:
+            cv2.line(ov, (0, lv.y_px), (ov.shape[1], lv.y_px), (255, 0, 255), 2)
+            cv2.putText(ov, f"{lv.name} {lv.girth_cm}cm", (10, lv.y_px - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 180, 0), 2)
+        cv2.imwrite(str(debug_dir / "markerless_front.jpg"), ov)
+        cv2.imwrite(str(debug_dir / "markerless_front_mask.png"), fmask)
+        for pv in profiles:
+            cv2.imwrite(str(debug_dir / f"markerless_{pv.label}_mask.png"), pv.mask)
+        if samples:
+            (debug_dir / "slice_sweep.json").write_text(json.dumps(
+                [{"y": s.y, "frac": round(s.torso_frac, 3), "width_cm": round(s.width_cm, 1),
+                  "depth_cm": round(s.depth_cm, 1) if s.depth_cm else None,
+                  "girth_cm": round(s.girth_cm, 1), "flare": s.flare} for s in samples],
+                indent=2,
+            ))
+    return res
+
+
+def _estimate_fixed_landmarks(
+    front,
+    fmask,
+    fpose,
+    ft,
+    fb,
+    f_stat_px,
+    fcx,
+    res,
+    profiles,
+) -> list[LevelMeasure]:
+    """Legacy fixed-landmark ellipse estimator (fallback when slice sweep fails)."""
+
     def level_y(mask_top, stat_px, pose, floor_frac, name):
         if pose:
             sh_y = (pose["l_shoulder"][1] + pose["r_shoulder"][1]) / 2
@@ -372,7 +470,10 @@ def estimate(
             return int(anchors[name])
         return int(mask_top + (1.0 - floor_frac) * stat_px)
 
+    levels: list[LevelMeasure] = []
     for name, floor_frac in LANDMARK_FROM_FLOOR.items():
+        if name == "shoulder":
+            continue
         yf = level_y(ft, f_stat_px, fpose, floor_frac, name)
         fbounds = _torso_x_bounds(fpose, yf)
         width_px = _central_run_width(fmask, yf, fcx, fbounds)
@@ -386,7 +487,6 @@ def estimate(
             ]
             if depths:
                 depth_cm = float(np.mean(depths))
-                # Reject implausible side depth (bounds bug used to yield ~3 cm; flare can over-read).
                 if depth_cm < 0.45 * width_cm or depth_cm > 0.90 * width_cm:
                     depth_cm = None
         if width_cm > 1:
@@ -395,7 +495,7 @@ def estimate(
             else:
                 girth = _ellipse_girth_cm(width_cm, 0.72 * width_cm)
         conf = 0.6 if (fpose and depth_cm and depth_cm > 1) else 0.35
-        res.levels.append(
+        levels.append(
             LevelMeasure(
                 name=name,
                 y_px=yf,
@@ -405,23 +505,11 @@ def estimate(
                 confidence=conf,
             )
         )
-
-    if debug_dir is not None:
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        ov = front.copy()
-        for lv in res.levels:
-            cv2.line(ov, (0, lv.y_px), (ov.shape[1], lv.y_px), (255, 0, 255), 2)
-            cv2.putText(ov, f"{lv.name} {lv.girth_cm}cm", (10, lv.y_px - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 180, 0), 2)
-        cv2.imwrite(str(debug_dir / "markerless_front.jpg"), ov)
-        cv2.imwrite(str(debug_dir / "markerless_front_mask.png"), fmask)
-        for pv in profiles:
-            cv2.imwrite(str(debug_dir / f"markerless_{pv.label}_mask.png"), pv.mask)
-    return res
+    return levels
 
 
 def _raw_girths(res: MarkerlessResult) -> dict[str, float]:
-    from pipeline.calibration import GIRTH_LEVELS
+    from pipeline.measure.calibration import GIRTH_LEVELS
 
     return {
         lv.name: lv.girth_cm
@@ -465,7 +553,7 @@ def main() -> None:
                    help="tape anchors in inches, e.g. bust=44,waist=38 (fits calibration)")
     p.add_argument("--tape-cm", type=str, default=None, help="tape anchors in cm")
     p.add_argument("--calibration", type=Path, default=None,
-                   help="JSON profile from pipeline.calibration fit")
+                   help="JSON profile from pipeline.measure.calibration fit")
     p.add_argument("--debug-dir", type=Path, default=None)
     args = p.parse_args()
     if args.height is None and args.ref is None:
@@ -476,12 +564,12 @@ def main() -> None:
     cal_profile = None
     raw_g = _raw_girths(res)
     if args.calibration:
-        from pipeline.calibration import apply_girth_calibration, load_profile
+        from pipeline.measure.calibration import apply_girth_calibration, load_profile
 
         cal_profile = load_profile(args.calibration)
         calibrated = apply_girth_calibration(raw_g, cal_profile)
     elif args.tape_in or args.tape_cm:
-        from pipeline.calibration import apply_girth_calibration, fit_profile, parse_tape_spec
+        from pipeline.measure.calibration import apply_girth_calibration, fit_profile, parse_tape_spec
 
         anchors = parse_tape_spec(args.tape_cm or args.tape_in, unit="cm" if args.tape_cm else "in")
         cal_profile = fit_profile(anchors, raw_g, name="inline")

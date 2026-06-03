@@ -170,7 +170,7 @@ def save_profile(profile: CalibrationProfile, path: str | Path) -> Path:
 
 
 def main() -> None:
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     p = argparse.ArgumentParser(description="Fit or apply tape calibration")
     sub = p.add_subparsers(dest="cmd", required=True)
 

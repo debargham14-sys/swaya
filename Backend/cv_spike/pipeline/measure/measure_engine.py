@@ -22,10 +22,10 @@ from pathlib import Path
 
 import cv2
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from pipeline import markerless, mesh_measure, smpl_backend
+from pipeline.measure import markerless, mesh_measure, smpl_backend
 
 CM_PER_IN = 2.54
 TARGETS = ("bust", "underbust", "waist", "hip")
@@ -89,7 +89,7 @@ def _from_markerless(mk: "markerless.MarkerlessResult", weight_kg: float) -> Eng
     }
     conf = max((lv.confidence for lv in mk.levels), default=0.3)
     return EngineResult(
-        backend="photo:silhouette+pose",
+        backend="photo:body-slice",
         height_cm=mk.height_cm,
         weight_kg=weight_kg,
         bmi=mk.bmi,
@@ -101,7 +101,7 @@ def _from_markerless(mk: "markerless.MarkerlessResult", weight_kg: float) -> Eng
 
 def _apply_calibration(result: EngineResult, tape_in: str | None, tape_cm: str | None,
                        calibration_path: Path | None) -> EngineResult:
-    from pipeline.calibration import apply_girth_calibration, fit_profile, load_profile, parse_tape_spec
+    from pipeline.measure.calibration import apply_girth_calibration, fit_profile, load_profile, parse_tape_spec
 
     raw = dict(result.girths_cm)
     if not raw:
@@ -127,8 +127,8 @@ def _derive_height_from_ref(
     ref_marker_mm: float,
 ) -> float | None:
     """Infer stature (cm) from ArUco/card scale × silhouette height in the front photo."""
-    from pipeline.markerless import analyze_view, _vertical_extent
-    from pipeline.scale_reference import detect_scale
+    from pipeline.measure.markerless import analyze_view, _vertical_extent
+    from pipeline.measure.scale_reference import detect_scale
 
     img = cv2.imread(str(front), cv2.IMREAD_COLOR)
     if img is None:

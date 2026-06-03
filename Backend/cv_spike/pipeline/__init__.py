@@ -1,3 +1,5 @@
 """Swaya body measurement pipeline."""
 
-__all__ = []
+from pipeline.measure import smpl_backend
+
+__all__ = ["smpl_backend"]

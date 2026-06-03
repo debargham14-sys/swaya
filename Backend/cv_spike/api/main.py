@@ -1,10 +1,12 @@
 """
-Swaya body-measurement API.
+Swaya / DSV body-measurement API.
 
-Two supported capture flows:
+Flows:
+  height  — front/back/side + height_cm
+  aruco   — photos + 50 mm ArUco marker
 
-  height  — front/back/side photos + subject height (cm); 4D-Humans mesh by default
-  aruco   — same photos + 50 mm ArUco at chest; photo silhouettes by default
+Beta:
+  POST /v1/scans — persist to MongoDB + downloadable ZIP (OBJ when mesh backend available)
 
 Run:
   cd Backend/cv_spike
@@ -16,7 +18,7 @@ from __future__ import annotations
 import sys
 import tempfile
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,18 +27,28 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline import smpl_backend  # noqa: E402
-from pipeline.measure_engine import measure  # noqa: E402
+from api.db.mongo import mongo_available, mongo_last_error  # noqa: E402
+from api.settings import SCAN_STORAGE_BACKEND  # noqa: E402
+from api.forms import (  # noqa: E402
+    MeasureMode,
+    PreferKind,
+    RefKind,
+    resolve_measure_request,
+    save_upload,
+)
+from api.routes.qc import router as qc_router  # noqa: E402
+from api.routes.scans import router as scans_router  # noqa: E402
+from pipeline.measure import smpl_backend  # noqa: E402
+from pipeline.measure.measure_engine import measure  # noqa: E402
 
 app = FastAPI(
-    title="Swaya Body Measurement API",
-    version="1.1.0",
+    title="DSV Body Measurement API",
+    version="1.2.0",
     description=(
-        "Estimate body girths from front, back, and side profile photos.\n\n"
-        "**Height flow:** send `mode=height`, `height_cm` → photo silhouettes (default; best with loose clothing). "
-        "Use `prefer=four_d_humans` for SMPL mesh (needs fitted clothing).\n\n"
-        "**ArUco flow:** send `mode=aruco` (or omit height) with a 50 mm chest marker → "
-        "photo silhouettes (default)."
+        "Estimate body girths from profile photos.\n\n"
+        "**Measure:** `POST /v1/measure` or `/v1/measure/height` (stateless).\n\n"
+        "**Beta scans:** `POST /v1/scans` stores results in MongoDB and returns a "
+        "downloadable ZIP with `manifest.json`, `measurements.json`, photos, and optional `body.obj`."
     ),
 )
 app.add_middleware(
@@ -45,53 +57,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-RefKind = Literal["aruco", "card", "a4"]
-MeasureMode = Literal["height", "aruco"]
-PreferKind = Literal["auto", "obj", "four_d_humans", "smplx", "photo"]
-
-
-async def _save_upload(upload: UploadFile, dest: Path) -> None:
-    data = await upload.read()
-    if not data:
-        raise HTTPException(status_code=400, detail=f"Empty upload: {upload.filename}")
-    dest.write_bytes(data)
-
-
-def _resolve_request(
-    mode: MeasureMode | None,
-    height_cm: float | None,
-    ref: RefKind | None,
-    prefer: PreferKind | None,
-) -> tuple[MeasureMode, float | None, RefKind | None, PreferKind]:
-    """Pick flow defaults: height → 4D-Humans; aruco → photo silhouettes."""
-    if mode is None:
-        if height_cm is not None:
-            mode = "height"
-        elif ref is not None:
-            mode = "aruco"
-        else:
-            raise HTTPException(
-                status_code=422,
-                detail="Set mode=height with height_cm, or mode=aruco with ref=aruco.",
-            )
-
-    if mode == "height":
-        if height_cm is None:
-            raise HTTPException(status_code=422, detail="mode=height requires height_cm.")
-        resolved_prefer: PreferKind = prefer or "photo"
-        # Scale from stature; ref only if client also sends one
-        return mode, height_cm, ref, resolved_prefer
-
-    if ref is None:
-        ref = "aruco"
-    resolved_prefer = prefer or "photo"
-    return mode, height_cm, ref, resolved_prefer
+app.include_router(scans_router)
+app.include_router(qc_router)
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "backends": smpl_backend.backend_status()}
+    return {
+        "status": "ok",
+        "backends": smpl_backend.backend_status(),
+        "mongodb": mongo_available(),
+        "mongodb_error": mongo_last_error() if not mongo_available() else None,
+        "scan_storage": SCAN_STORAGE_BACKEND,
+    }
 
 
 @app.post("/v1/measure")
@@ -99,25 +77,16 @@ async def measure_body(
     front: UploadFile = File(..., description="Front-facing full-body photo"),
     back: UploadFile = File(..., description="Back-facing full-body photo"),
     side: UploadFile = File(..., description="Side-profile full-body photo"),
-    mode: Optional[MeasureMode] = Form(
-        None,
-        description="height: send height_cm (4D-Humans default). aruco: chest marker (photo default).",
-    ),
-    height_cm: Optional[float] = Form(None, description="Subject height in cm (required for mode=height)"),
-    weight_kg: Optional[float] = Form(None, description="Subject weight in kg (optional, for BMI)"),
-    ref: Optional[RefKind] = Form(
-        None,
-        description="Scale reference in frame (required for mode=aruco unless height_cm is set)",
-    ),
-    ref_mm: float = Form(50.0, description="Printed ArUco marker side length in mm"),
-    tape_in: Optional[str] = Form(None, description="Tape anchors in inches, e.g. bust=44,waist=38"),
-    tape_cm: Optional[str] = Form(None, description="Tape anchors in cm"),
-    prefer: Optional[PreferKind] = Form(
-        None,
-        description="Default: photo (height flow) or photo (aruco flow). four_d_humans needs fitted clothes.",
-    ),
+    mode: Optional[MeasureMode] = Form(None),
+    height_cm: Optional[float] = Form(None),
+    weight_kg: Optional[float] = Form(None),
+    ref: Optional[RefKind] = Form(None),
+    ref_mm: float = Form(50.0),
+    tape_in: Optional[str] = Form(None),
+    tape_cm: Optional[str] = Form(None),
+    prefer: Optional[PreferKind] = Form(None),
 ) -> dict:
-    flow, height_cm, ref, prefer = _resolve_request(mode, height_cm, ref, prefer)
+    flow, height_cm, ref, prefer = resolve_measure_request(mode, height_cm, ref, prefer)
 
     suffix = {
         "front": Path(front.filename or "front.jpg").suffix or ".jpg",
@@ -127,13 +96,10 @@ async def measure_body(
 
     with tempfile.TemporaryDirectory(prefix="swaya_measure_") as tmp:
         tmp_dir = Path(tmp)
-        paths = {
-            view: tmp_dir / f"{view}{suffix[view]}"
-            for view in ("front", "back", "side")
-        }
-        await _save_upload(front, paths["front"])
-        await _save_upload(back, paths["back"])
-        await _save_upload(side, paths["side"])
+        paths = {view: tmp_dir / f"{view}{suffix[view]}" for view in ("front", "back", "side")}
+        await save_upload(front, paths["front"])
+        await save_upload(back, paths["back"])
+        await save_upload(side, paths["side"])
 
         try:
             result = measure(
@@ -167,13 +133,12 @@ async def measure_body_height_flow(
     front: UploadFile = File(...),
     back: UploadFile = File(...),
     side: UploadFile = File(...),
-    height_cm: float = Form(..., description="Subject height in cm"),
+    height_cm: float = Form(...),
     weight_kg: Optional[float] = Form(None),
-    prefer: Optional[PreferKind] = Form(None, description="Default: four_d_humans"),
+    prefer: Optional[PreferKind] = Form(None),
     tape_in: Optional[str] = Form(None),
     tape_cm: Optional[str] = Form(None),
 ) -> dict:
-    """Convenience endpoint: height + weight + 3 photos → 4D-Humans mesh (default)."""
     return await measure_body(
         front=front,
         back=back,

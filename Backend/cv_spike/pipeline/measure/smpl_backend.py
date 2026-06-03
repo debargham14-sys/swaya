@@ -19,9 +19,9 @@ from pathlib import Path
 
 import numpy as np
 
-from pipeline import mesh_measure
+from pipeline.measure import mesh_measure
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SMPL_VENDOR_DATA = ROOT / "models" / "smpl" / "basicModel_neutral_lbs_10_207_0_v1.0.0.pkl"
 CACHE_4D = Path.home() / ".cache" / "4DHumans"
 SMPL_CACHE = CACHE_4D / "data" / "smpl" / "SMPL_NEUTRAL.pkl"
@@ -126,7 +126,7 @@ def recover_mesh_from_obj(mesh_path: str | Path):
 
 def _person_bbox_xyxy(image_bgr: np.ndarray, margin: float = 0.08) -> np.ndarray:
     """Tight bbox around the person for HMR2 (full-frame box shrinks the body)."""
-    from pipeline.markerless import analyze_view
+    from pipeline.measure.markerless import analyze_view
 
     h, w = image_bgr.shape[:2]
     mask, _, warn = analyze_view(image_bgr)

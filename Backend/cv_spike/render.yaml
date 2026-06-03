@@ -1,0 +1,21 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# After deploy, set MONGODB_URI in the Render dashboard (Atlas connection string).
+services:
+  - type: web
+    name: swaya-dsv-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: dsv
+      - key: SCAN_STORAGE_BACKEND
+        value: gridfs
+      - key: BUNDLE_TRY_MESH
+        value: "0"
+      - key: PYTHONUNBUFFERED
+        value: "1"

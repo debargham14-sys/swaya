@@ -126,38 +126,55 @@ def _decode_pose_worker_payload(data: dict, img_shape: tuple[int, int], scale: f
     return landmarks, mask
 
 
-def _run_pose_landmarker(img: np.ndarray):
-    """Run Tasks PoseLandmarker once; returns (landmarks_dict_or_None, mask_or_None)."""
+def _run_pose_landmarker_subprocess(bgr: np.ndarray) -> tuple[dict | None, str | None]:
+    """macOS: isolate MediaPipe in a child process (pyrender/GL crash workaround)."""
     import os
     import subprocess
     import tempfile
 
+    ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    if not ok:
+        return None, "encode_failed"
+    tmppath: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp.write(buf.tobytes())
+            tmppath = tmp.name
+        proc = subprocess.run(
+            [sys.executable, "-m", "pipeline.measure.pose_worker", tmppath],
+            capture_output=True,
+            text=True,
+            cwd=str(ROOT),
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "worker_failed")[:240]
+            return None, err
+        return json.loads(proc.stdout.strip()), None
+    finally:
+        if tmppath:
+            try:
+                os.unlink(tmppath)
+            except OSError:
+                pass
+
+
+def _run_pose_landmarker(img: np.ndarray):
+    """Run Tasks PoseLandmarker once; returns (landmarks_dict_or_None, mask_or_None)."""
+    import platform
+
+    from pipeline.measure.pose_worker import run_on_bgr
+
+    use_subprocess = platform.system() == "Darwin"
+
     def _call(bgr: np.ndarray, scale: float) -> tuple[dict | None, str | None]:
-        ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
-        if not ok:
-            return None, "encode_failed"
-        tmppath: str | None = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-                tmp.write(buf.tobytes())
-                tmppath = tmp.name
-            proc = subprocess.run(
-                [sys.executable, "-m", "pipeline.measure.pose_worker", tmppath],
-                capture_output=True,
-                text=True,
-                cwd=str(ROOT),
-                timeout=120,
-            )
-            if proc.returncode != 0:
-                err = (proc.stderr or proc.stdout or "worker_failed")[:240]
-                return None, err
-            return json.loads(proc.stdout.strip()), None
-        finally:
-            if tmppath:
-                try:
-                    os.unlink(tmppath)
-                except OSError:
-                    pass
+        del scale
+        if use_subprocess:
+            return _run_pose_landmarker_subprocess(bgr)
+        data = run_on_bgr(bgr)
+        if data.get("error"):
+            return None, str(data["error"])
+        return data, None
 
     last_err = "no_pose"
     for scale in (1.0, 0.75):

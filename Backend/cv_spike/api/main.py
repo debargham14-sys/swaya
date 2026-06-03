@@ -15,6 +15,7 @@ Run:
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -36,10 +37,11 @@ from api.forms import (  # noqa: E402
     resolve_measure_request,
     save_upload,
 )
-from api.routes.qc import router as qc_router  # noqa: E402
 from api.routes.scans import router as scans_router  # noqa: E402
 from pipeline.measure import smpl_backend  # noqa: E402
 from pipeline.measure.measure_engine import measure  # noqa: E402
+
+_ENABLE_QC = os.getenv("ENABLE_QC", "0").strip().lower() in ("1", "true", "yes")
 
 app = FastAPI(
     title="DSV Body Measurement API",
@@ -58,7 +60,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(scans_router)
-app.include_router(qc_router)
+
+if _ENABLE_QC:
+    from api.routes.qc import router as qc_router  # noqa: E402
+
+    app.include_router(qc_router)
 
 
 @app.get("/health")
@@ -69,6 +75,7 @@ def health() -> dict:
         "mongodb": mongo_available(),
         "mongodb_error": mongo_last_error() if not mongo_available() else None,
         "scan_storage": SCAN_STORAGE_BACKEND,
+        "qc_enabled": _ENABLE_QC,
     }
 
 

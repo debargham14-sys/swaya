@@ -1,0 +1,21 @@
+{
+  "order_id": "SW-2026-04827",
+  "customer_name": "Priya R.",
+  "tier": "bespoke",
+  "variant": "sleeveless",
+  "design_code": "BL-PRINCESS-07",
+  "fabric": "Raw silk, magenta",
+  "target_dims_mm": {
+    "bust": 860,
+    "underbust": 740,
+    "shoulder_width": 380,
+    "total_length": 600,
+    "across_front": 340,
+    "armhole_depth": 220
+  },
+  "features": [
+    {"id": "princess_seam_presence", "type": "princess_seam"},
+    {"id": "bust_dart_presence", "type": "bust_dart"}
+  ],
+  "special_instructions": "Center-front hook closure; press princess seams flat."
+}

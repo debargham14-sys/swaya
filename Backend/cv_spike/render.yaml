@@ -19,3 +19,5 @@ services:
         value: "0"
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: ENABLE_QC
+        value: "0"

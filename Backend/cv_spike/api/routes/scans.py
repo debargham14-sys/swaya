@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from api.db.mongo import mongo_available, mongo_last_error
 from api.forms import MeasureMode, PreferKind, RefKind, resolve_measure_request, save_upload
@@ -20,6 +21,25 @@ from api.services.scan_service import ScanService, process_uploaded_scan
 from pipeline.measure import smpl_backend
 
 router = APIRouter(prefix="/v1/scans", tags=["scans"])
+
+GIRTH_LEVELS = ("bust", "underbust", "waist", "hip")
+
+
+class GroundTruthBody(BaseModel):
+    """Tape-measured girths in cm (optional fields — enter what you have)."""
+
+    bust_cm: float | None = Field(None, gt=0, le=250)
+    underbust_cm: float | None = Field(None, gt=0, le=250)
+    waist_cm: float | None = Field(None, gt=0, le=250)
+    hip_cm: float | None = Field(None, gt=0, le=250)
+
+    def to_cm_dict(self) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for level in GIRTH_LEVELS:
+            val = getattr(self, f"{level}_cm")
+            if val is not None:
+                out[level] = float(val)
+        return out
 
 
 def _require_mongo() -> None:
@@ -150,4 +170,21 @@ async def create_scan(
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"Scan failed: {exc}") from exc
 
+    return doc
+
+
+@router.patch("/{scan_id}/ground-truth")
+def save_ground_truth(scan_id: str, body: GroundTruthBody) -> dict:
+    """Save tape-measured girths for this scan (training / calibration dataset)."""
+    _require_mongo()
+    payload = body.to_cm_dict()
+    if not payload:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide at least one girth in cm (bust_cm, waist_cm, hip_cm, underbust_cm).",
+        )
+    doc = ScanService().save_ground_truth(scan_id, payload)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    logger.info("scan %s ground_truth saved: %s", scan_id, list(payload.keys()))
     return doc

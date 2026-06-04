@@ -75,6 +75,38 @@ class ScanApi {
     );
   }
 
+  Future<ScanRecord> saveGroundTruth({
+    required String scanId,
+    double? bustCm,
+    double? underbustCm,
+    double? waistCm,
+    double? hipCm,
+  }) async {
+    final body = <String, dynamic>{};
+    if (bustCm != null) body['bust_cm'] = bustCm;
+    if (underbustCm != null) body['underbust_cm'] = underbustCm;
+    if (waistCm != null) body['waist_cm'] = waistCm;
+    if (hipCm != null) body['hip_cm'] = hipCm;
+
+    final res = await _client.patch(
+      _uri('/v1/scans/$scanId/ground-truth'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return ScanRecord.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    }
+    String detail = res.body;
+    try {
+      final err = jsonDecode(res.body) as Map<String, dynamic>;
+      detail = err['detail']?.toString() ?? res.body;
+    } catch (_) {}
+    throw MeasureApiException(
+      detail.isEmpty ? 'Could not save ground truth (${res.statusCode})' : detail,
+      statusCode: res.statusCode,
+    );
+  }
+
   Future<List<ScanRecord>> listScans({int limit = 30}) async {
     final res = await _client.get(_uri(AppConfig.scansPath, {'limit': '$limit'}));
     if (res.statusCode != 200) {

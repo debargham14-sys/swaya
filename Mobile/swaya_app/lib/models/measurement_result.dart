@@ -9,6 +9,8 @@ class MeasurementResult {
     required this.girthsCm,
     required this.girthsIn,
     this.warnings = const [],
+    this.calibrationProfile,
+    this.calibrationTrainingScans,
   });
 
   factory MeasurementResult.fromJson(Map<String, dynamic> json) {
@@ -31,6 +33,8 @@ class MeasurementResult {
               ?.map((e) => e.toString())
               .toList() ??
           [],
+      calibrationProfile: json['calibration_profile'] as String?,
+      calibrationTrainingScans: json['calibration_training_scans'] as int?,
     );
   }
 
@@ -43,6 +47,10 @@ class MeasurementResult {
   final Map<String, double> girthsCm;
   final Map<String, double> girthsIn;
   final List<String> warnings;
+  final String? calibrationProfile;
+  final int? calibrationTrainingScans;
+
+  bool get isCalibrated => calibrationProfile != null && calibrationProfile!.isNotEmpty;
 
   String confidenceLabel() {
     if (confidence == null) return '';

@@ -84,14 +84,8 @@ class CaptureSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  void resetForNewScan() {
-    _photos.updateAll((_, __) => null);
-    lastResult = null;
-    lastScan = null;
-    isMeasuring = false;
-    measureError = null;
-    notifyListeners();
-  }
+  /// Clears capture + results and participant fields for a fresh scan.
+  void resetForNewScan() => resetCapture();
 
   Map<CaptureView, CapturedPhoto> get photos {
     return Map.fromEntries(

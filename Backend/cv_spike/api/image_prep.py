@@ -9,7 +9,7 @@ import cv2
 
 
 def max_image_edge() -> int:
-    raw = os.environ.get("SCAN_MAX_IMAGE_EDGE", "1280").strip()
+    raw = os.environ.get("SCAN_MAX_IMAGE_EDGE", "1536").strip()
     try:
         return max(640, min(int(raw), 2560))
     except ValueError:

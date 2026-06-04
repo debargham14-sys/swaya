@@ -7,7 +7,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from api.db.calibration import CalibrationRepository
 from api.db.scans import ScanRepository
+from api.services.calibration_service import apply_to_engine_result, refresh_scan_after_ground_truth
 from pipeline.measure.bundle_export import build_beta_bundle
 
 
@@ -52,10 +54,15 @@ class ScanService:
                 ref_kind=ref_kind,
                 ref_marker_mm=ref_marker_mm,
             )
+            result = apply_to_engine_result(result)
             bundle_bytes = zip_path.read_bytes()
             bundle_filename = f"{scan_id}.zip"
 
         measurements = result.to_dict()
+        if result.calibration_profile:
+            meta = CalibrationRepository().get_global_meta()
+            if meta:
+                measurements["calibration_training_scans"] = meta.get("training_scans")
         measurements["mode"] = mode
         measurements["scan_id"] = scan_id
 
@@ -114,6 +121,17 @@ class ScanService:
 
     def open_photo(self, scan_id: str, view: str):
         return self._repo.open_photo(scan_id, view)
+
+    def save_ground_truth(self, scan_id: str, ground_truth_cm: dict[str, float]) -> dict[str, Any] | None:
+        doc = self._repo.update_ground_truth(scan_id, ground_truth_cm)
+        if not doc:
+            return None
+        doc = refresh_scan_after_ground_truth(scan_id) or doc
+        doc["download_url"] = f"/v1/scans/{scan_id}/bundle"
+        doc["photo_urls"] = {
+            view: f"/v1/scans/{scan_id}/photos/{view}" for view in ("front", "back", "side")
+        }
+        return doc
 
 
 def process_uploaded_scan(

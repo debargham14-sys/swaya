@@ -22,7 +22,7 @@ ENV SCAN_STORAGE_BACKEND=gridfs
 ENV BUNDLE_TRY_MESH=0
 # Accuracy-first defaults. MediaPipe pose+segmentation on all views; GrabCut is a
 # downscaled fallback only. Tune for speed via env if needed.
-ENV SCAN_MAX_IMAGE_EDGE=1280
+ENV SCAN_MAX_IMAGE_EDGE=1536
 ENV POSE_SINGLE_SCALE=0
 ENV POSE_FRONT_ONLY=0
 ENV GRABCUT_WORK_EDGE=512

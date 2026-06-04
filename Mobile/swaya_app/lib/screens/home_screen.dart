@@ -36,7 +36,10 @@ class HomeScreen extends StatelessWidget {
             title: 'New body scan',
             subtitle: 'Front, back, and side photos + height',
             icon: Icons.camera_alt_outlined,
-            onTap: () => context.push('/scan/height'),
+            onTap: () {
+              session.resetForNewScan();
+              context.go('/scan/height');
+            },
           ),
           const SizedBox(height: 12),
           if (hasResults) ...[

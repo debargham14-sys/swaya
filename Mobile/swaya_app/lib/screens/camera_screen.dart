@@ -30,9 +30,9 @@ class _CameraScreenState extends State<CameraScreen> {
       final picked = await _picker.pickImage(
         source: source,
         preferredCameraDevice: CameraDevice.rear,
-        imageQuality: 82,
-        maxWidth: 1280,
-        maxHeight: 1920,
+        imageQuality: 92,
+        maxWidth: 1536,
+        maxHeight: 2048,
       );
       if (picked == null || !mounted) return;
       final bytes = await picked.readAsBytes();

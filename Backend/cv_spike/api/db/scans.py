@@ -122,6 +122,39 @@ class ScanRepository:
         cursor = self._col.find().sort("created_at", -1).limit(limit)
         return [self._serialize(d) for d in cursor]
 
+    def update_ground_truth(
+        self, scan_id: str, ground_truth_cm: dict[str, float]
+    ) -> dict[str, Any] | None:
+        """Store tape-measured girths (cm) for training / calibration."""
+        doc = self._col.find_one({"_id": scan_id})
+        if not doc:
+            return None
+        cleaned = {k: float(v) for k, v in ground_truth_cm.items() if v is not None and v > 0}
+        now = datetime.now(timezone.utc)
+        measurements = dict(doc.get("measurements") or {})
+        predicted = measurements.get("girths_cm") or {}
+        comparison: dict[str, Any] = {}
+        for level, tape_cm in cleaned.items():
+            pred = predicted.get(level)
+            if pred is not None:
+                comparison[level] = {
+                    "predicted_cm": round(float(pred), 1),
+                    "tape_cm": round(tape_cm, 1),
+                    "error_cm": round(tape_cm - float(pred), 1),
+                }
+        self._col.update_one(
+            {"_id": scan_id},
+            {
+                "$set": {
+                    "ground_truth_cm": cleaned,
+                    "ground_truth_comparison": comparison,
+                    "ground_truth_saved_at": now,
+                    "updated_at": now,
+                }
+            },
+        )
+        return self.get_scan(scan_id)
+
     def open_bundle(self, scan_id: str) -> tuple[BinaryIO | Path, str, int] | None:
         """Return (stream-or-path, filename, size_bytes) for the bundle ZIP."""
         doc = self._col.find_one({"_id": scan_id})

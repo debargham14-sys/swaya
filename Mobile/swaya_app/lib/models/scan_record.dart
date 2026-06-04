@@ -1,3 +1,4 @@
+import 'ground_truth.dart';
 import 'measurement_result.dart';
 
 class ScanRecord {
@@ -7,6 +8,8 @@ class ScanRecord {
     required this.downloadUrl,
     this.meshIncluded = false,
     this.createdAt,
+    this.groundTruthCm = const {},
+    this.groundTruthComparison = const {},
   });
 
   factory ScanRecord.fromJson(Map<String, dynamic> json) {
@@ -14,12 +17,33 @@ class ScanRecord {
     final Map<String, dynamic> measureMap = measurements is Map<String, dynamic>
         ? measurements
         : json;
+
+    final gtRaw = json['ground_truth_cm'];
+    final groundTruthCm = <String, double>{};
+    if (gtRaw is Map) {
+      gtRaw.forEach((k, v) {
+        if (v is num) groundTruthCm[k.toString()] = v.toDouble();
+      });
+    }
+
+    final cmpRaw = json['ground_truth_comparison'];
+    final comparison = <String, GroundTruthComparison>{};
+    if (cmpRaw is Map) {
+      cmpRaw.forEach((k, v) {
+        if (v is Map<String, dynamic>) {
+          comparison[k.toString()] = GroundTruthComparison.fromJson(v);
+        }
+      });
+    }
+
     return ScanRecord(
       scanId: json['scan_id'] as String? ?? '',
       result: MeasurementResult.fromJson(measureMap),
       downloadUrl: json['download_url'] as String? ?? '',
       meshIncluded: json['mesh_included'] as bool? ?? false,
       createdAt: json['created_at'] as String?,
+      groundTruthCm: groundTruthCm,
+      groundTruthComparison: comparison,
     );
   }
 
@@ -28,6 +52,8 @@ class ScanRecord {
   final String downloadUrl;
   final bool meshIncluded;
   final String? createdAt;
+  final Map<String, double> groundTruthCm;
+  final Map<String, GroundTruthComparison> groundTruthComparison;
 
   String bundleAbsoluteUrl(String apiBase) {
     final base = apiBase.replaceAll(RegExp(r'/+$'), '');

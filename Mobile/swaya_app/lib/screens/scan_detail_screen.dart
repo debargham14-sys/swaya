@@ -191,6 +191,22 @@ class _ScanDetailScreenState extends State<ScanDetailScreen> {
                   ),
             ),
           ],
+          if (!result.measurementsReliable || !result.hasGirths) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: SwayaColors.warning.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: SwayaColors.warning.withValues(alpha: 0.5)),
+              ),
+              child: const Text(
+                'Measurements were not reliable for this scan. Edit tape values below or retake photos in fitted clothing.',
+                style: TextStyle(color: SwayaColors.warning, fontSize: 13),
+              ),
+            ),
+          ],
           const SizedBox(height: 20),
           Text(
             'Measurements',

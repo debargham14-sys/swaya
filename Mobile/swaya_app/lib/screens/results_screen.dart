@@ -164,6 +164,23 @@ class _ResultsScreenState extends State<ResultsScreen> {
               ],
             ],
           ),
+          if (!result.measurementsReliable || !result.hasGirths) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: SwayaColors.warning.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: SwayaColors.warning.withValues(alpha: 0.5)),
+              ),
+              child: const Text(
+                'Could not measure reliably (pose or clothing issue). '
+                'Retake in fitted clothing with arms slightly out, or enter tape measurements below.',
+                style: TextStyle(color: SwayaColors.warning, fontSize: 13),
+              ),
+            ),
+          ],
           if (result.isCalibrated) ...[
             const SizedBox(height: 12),
             Container(

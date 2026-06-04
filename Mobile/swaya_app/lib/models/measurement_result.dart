@@ -11,6 +11,7 @@ class MeasurementResult {
     this.warnings = const [],
     this.calibrationProfile,
     this.calibrationTrainingScans,
+    this.measurementsReliable = true,
   });
 
   factory MeasurementResult.fromJson(Map<String, dynamic> json) {
@@ -35,7 +36,17 @@ class MeasurementResult {
           [],
       calibrationProfile: json['calibration_profile'] as String?,
       calibrationTrainingScans: json['calibration_training_scans'] as int?,
+      measurementsReliable: json['measurements_reliable'] as bool? ??
+          !_warningsUnreliable(json['warnings'] as List<dynamic>?),
     );
+  }
+
+  static bool _warningsUnreliable(List<dynamic>? warnings) {
+    if (warnings == null) return false;
+    final text = warnings.map((e) => e.toString()).join(' ').toLowerCase();
+    return text.contains('measurements_unreliable') ||
+        text.contains('pose_not_detected') ||
+        text.contains('pose_error:');
   }
 
   final String mode;
@@ -50,7 +61,11 @@ class MeasurementResult {
   final String? calibrationProfile;
   final int? calibrationTrainingScans;
 
+  final bool measurementsReliable;
+
   bool get isCalibrated => calibrationProfile != null && calibrationProfile!.isNotEmpty;
+
+  bool get hasGirths => girthsCm.isNotEmpty;
 
   String confidenceLabel() {
     if (confidence == null) return '';

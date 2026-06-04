@@ -54,6 +54,9 @@ class EngineResult:
         return {k: round(v / CM_PER_IN, 1) for k, v in self.girths_cm.items()}
 
     def to_dict(self) -> dict:
+        from pipeline.measure.measurement_quality import cv_degraded
+
+        reliable = bool(self.girths_cm) and not cv_degraded(self.warnings)
         return {
             "backend": self.backend,
             "height_cm": self.height_cm,
@@ -65,6 +68,7 @@ class EngineResult:
             "girths_in": self.girths_in(),
             "calibration_profile": self.calibration_profile,
             "warnings": self.warnings,
+            "measurements_reliable": reliable,
         }
 
 
@@ -202,6 +206,9 @@ def measure(
         ref_kind=ref_kind, ref_marker_mm=ref_marker_mm, back_path=back,
     )
     out = _from_markerless(mk, weight_kg or 0.0)
+    from pipeline.measure.measurement_quality import apply_quality_gate
+
+    out = apply_quality_gate(out)
     if tape_in or tape_cm or calibration_path:
         out = _apply_calibration(out, tape_in, tape_cm, calibration_path)
     return out

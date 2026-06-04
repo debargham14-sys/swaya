@@ -78,6 +78,8 @@ if _ENABLE_QC:
 
 @app.get("/health")
 def health() -> dict:
+    from pipeline.measure.pose_worker import pose_model_status
+
     return {
         "status": "ok",
         "backends": smpl_backend.backend_status(),
@@ -85,7 +87,30 @@ def health() -> dict:
         "mongodb_error": mongo_last_error() if not mongo_available() else None,
         "scan_storage": SCAN_STORAGE_BACKEND,
         "qc_enabled": _ENABLE_QC,
+        "pose_model": pose_model_status(),
     }
+
+
+@app.on_event("startup")
+def _warmup_pose_model() -> None:
+    """Load MediaPipe on boot so first scan is not a cold-start pose failure."""
+    import threading
+
+    log = logging.getLogger("swaya.startup")
+
+    def _run() -> None:
+        try:
+            from pipeline.measure.pose_worker import pose_model_status, warmup
+
+            st = pose_model_status()
+            log.info("pose_model status: %s", st)
+            if st.get("ok"):
+                warmup()
+                log.info("pose_model warmup complete")
+        except Exception as exc:  # noqa: BLE001
+            log.error("pose_model warmup failed: %s", exc)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 @app.post("/v1/measure")

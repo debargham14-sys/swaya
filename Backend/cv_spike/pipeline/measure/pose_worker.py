@@ -13,7 +13,35 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-_POSE_MODEL = ROOT / "models" / "pose_landmarker.task"
+
+
+def resolve_pose_model_path() -> Path:
+    """Find pose_landmarker.task in Docker (/app/models) or local checkout."""
+    env = os.environ.get("POSE_MODEL_PATH", "").strip()
+    if env:
+        p = Path(env)
+        if p.is_file():
+            return p
+    for candidate in (
+        ROOT / "models" / "pose_landmarker.task",
+        Path("/app/models/pose_landmarker.task"),
+    ):
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        "pose_landmarker.task not found — rebuild Docker image or set POSE_MODEL_PATH"
+    )
+
+
+def pose_model_status() -> dict:
+    try:
+        p = resolve_pose_model_path()
+        return {"ok": True, "path": str(p), "size_bytes": p.stat().st_size}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+_POSE_MODEL: Path | None = None
 _POSE_IDX = {
     "nose": 0,
     "l_shoulder": 11,
@@ -53,9 +81,11 @@ def _detect(bgr: np.ndarray) -> dict:
     from mediapipe.tasks import python as mptp
     from mediapipe.tasks.python import vision
 
-    global _landmarker
+    global _landmarker, _POSE_MODEL
     with _landmarker_lock:
         if _landmarker is None:
+            if _POSE_MODEL is None:
+                _POSE_MODEL = resolve_pose_model_path()
             base = mptp.BaseOptions(model_asset_path=str(_POSE_MODEL))
             opts = vision.PoseLandmarkerOptions(
                 base_options=base,
@@ -105,6 +135,12 @@ def run_on_path(path: str) -> dict:
     if img is None:
         return {"error": f"unreadable:{path}"}
     return run_on_bgr(img)
+
+
+def warmup() -> dict:
+    """Load MediaPipe pose model once (call on API startup)."""
+    tiny = __import__("numpy").zeros((64, 48, 3), dtype=__import__("numpy").uint8)
+    return run_on_bgr(tiny)
 
 
 def main(argv: list[str] | None = None) -> int:

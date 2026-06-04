@@ -233,23 +233,41 @@ def _run_pose_landmarker(img: np.ndarray):
     )
     scales = (1.0,) if single_scale else (1.0, 0.85, 0.65)
     last_err = "no_pose"
+    h, w = img.shape[:2]
+    longest = max(h, w)
+
+    def _try(bgr: np.ndarray, scale: float) -> tuple[dict | None, str | None] | None:
+        try:
+            data, err = _call(bgr, scale)
+        except Exception as e:  # noqa: BLE001
+            return None
+        if not data or data.get("error"):
+            nonlocal last_err
+            last_err = err or data.get("error", "no_pose") if data else (err or "no_pose")
+            return None
+        landmarks, mask = _decode_pose_worker_payload(data, img.shape, scale)
+        if landmarks or mask is not None:
+            return landmarks, mask
+        return None
+
     for scale in scales:
         bgr = img if scale == 1.0 else cv2.resize(
             img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA,
         )
-        try:
-            data, err = _call(bgr, scale)
-        except Exception as e:  # noqa: BLE001
-            data, err = None, str(e)
-        if not data or data.get("error"):
+        hit = _try(bgr, scale)
+        if hit:
+            return hit
+
+    # Normalise very large phone photos — MediaPipe is more stable near ~1280px edge.
+    for target in (1280, 960):
+        if longest <= target:
             continue
-        landmarks, mask = _decode_pose_worker_payload(data, img.shape, scale)
-        if landmarks or mask is not None:
-            return landmarks, mask
-        if err:
-            last_err = err
-        else:
-            last_err = data.get("error", "no_pose")
+        s = target / float(longest)
+        bgr = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+        hit = _try(bgr, s)
+        if hit:
+            return hit
+
     return None, f"pose_error:{last_err}"
 
 
@@ -371,8 +389,8 @@ def _load_profile_view(
     if img is None:
         res.warnings.append(f"{label}_unreadable")
         return None
-    # Cloud default: MediaPipe only on front; back/side use faster GrabCut masks.
-    mask, pose, warn = analyze_view(img, use_pose=not _pose_front_only())
+    # Always run pose on profile views (side/back depth needs landmarks or seg mask).
+    mask, pose, warn = analyze_view(img, use_pose=True)
     if warn:
         res.warnings.append(f"{label}:{warn}")
     top, bottom = _vertical_extent(mask)

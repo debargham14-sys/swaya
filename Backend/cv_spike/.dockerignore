@@ -1,0 +1,15 @@
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+data/
+tests/
+scripts/
+vendor/
+models/smpl/
+models/smplx/
+assets/
+*.md
+.env
+.git

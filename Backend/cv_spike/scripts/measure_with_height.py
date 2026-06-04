@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pipeline.measure_engine import measure, print_result
+from pipeline.measure.measure_engine import measure, print_result
 
 
 def main() -> None:

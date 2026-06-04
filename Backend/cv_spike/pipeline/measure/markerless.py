@@ -62,21 +62,58 @@ class MarkerlessResult:
     warnings: list[str] = field(default_factory=list)
 
 
+def _grabcut_work_edge() -> int:
+    """Longest edge GrabCut runs at. GrabCut cost ~ pixels, so downscaling is a big win.
+
+    On Render's 0.5 vCPU, full-res GrabCut took 120-180s/view; ~512px brings it to a
+    few seconds. Mask is upscaled back to full resolution afterwards (measurements use
+    pixel ratios, which are scale-invariant).
+    """
+    import os
+
+    raw = os.environ.get("GRABCUT_WORK_EDGE", "512").strip()
+    try:
+        return max(256, min(int(raw), 1280))
+    except ValueError:
+        return 512
+
+
+def _grabcut_iters() -> int:
+    import os
+
+    raw = os.environ.get("GRABCUT_ITERS", "3").strip()
+    try:
+        return max(1, min(int(raw), 8))
+    except ValueError:
+        return 3
+
+
 def _segment_grabcut(img: np.ndarray) -> np.ndarray:
     """Fallback: GrabCut person silhouette (used only if MediaPipe unavailable)."""
-    h, w = img.shape[:2]
+    full_h, full_w = img.shape[:2]
+    edge = _grabcut_work_edge()
+    longest = max(full_h, full_w)
+    if longest > edge:
+        s = edge / float(longest)
+        work = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+    else:
+        work = img
+    h, w = work.shape[:2]
     mask = np.zeros((h, w), np.uint8)
     rect = (int(w * 0.06), int(h * 0.02), int(w * 0.88), int(h * 0.96))
     bgd = np.zeros((1, 65), np.float64)
     fgd = np.zeros((1, 65), np.float64)
     try:
-        cv2.grabCut(img, mask, rect, bgd, fgd, 5, cv2.GC_INIT_WITH_RECT)
+        cv2.grabCut(work, mask, rect, bgd, fgd, _grabcut_iters(), cv2.GC_INIT_WITH_RECT)
     except cv2.error:
-        m = np.zeros((h, w), np.uint8)
-        m[rect[1] : rect[1] + rect[3], rect[0] : rect[0] + rect[2]] = 255
+        m = np.zeros((full_h, full_w), np.uint8)
+        fr = (int(full_w * 0.06), int(full_h * 0.02), int(full_w * 0.88), int(full_h * 0.96))
+        m[fr[1] : fr[1] + fr[3], fr[0] : fr[0] + fr[2]] = 255
         return m
     person = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
-    person = cv2.morphologyEx(person, cv2.MORPH_CLOSE, np.ones((11, 11), np.uint8), 2)
+    person = cv2.morphologyEx(person, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8), 2)
+    if person.shape[:2] != (full_h, full_w):
+        person = cv2.resize(person, (full_w, full_h), interpolation=cv2.INTER_NEAREST)
     return person
 
 
@@ -410,9 +447,10 @@ def estimate(
     logger.info("measure: front pose+segmentation start (%dx%d)", front.shape[1], front.shape[0])
     fmask, fpose, fwarn = analyze_view(front)
     logger.info(
-        "measure: front done in %.1fs (pose=%s)",
+        "measure: front done in %.1fs (pose=%s%s)",
         time.perf_counter() - _t,
         "ok" if fpose else "none",
+        "" if fpose else f", reason={fwarn}",
     )
     if fwarn:
         res.warnings.append(f"front:{fwarn}")

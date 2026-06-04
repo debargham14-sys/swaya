@@ -15,3 +15,6 @@ models/**/*.zip
 # Local capture data and debug artifacts
 spike_data/user_capture/
 spike_data/**/debug/
+
+# MongoDB scan bundles (local beta storage)
+data/scans/

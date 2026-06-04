@@ -1,6 +1,6 @@
 """Tape calibration affine fit."""
 
-from pipeline.calibration import (
+from pipeline.measure.calibration import (
     apply_girth_calibration,
     fit_affine_girth,
     fit_profile,

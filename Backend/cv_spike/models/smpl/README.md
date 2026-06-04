@@ -23,6 +23,6 @@
 Verify:
 
 ```bash
-python -c "from pipeline import smpl_backend as s; print(s.four_d_humans_available())"
+python -c "from pipeline.measure import smpl_backend as s; print(s.four_d_humans_available())"
 python scripts/try_4dhumans.py tests/fixtures/profiles/front/dummy_female_01.jpg
 ```

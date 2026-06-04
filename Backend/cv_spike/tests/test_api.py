@@ -62,7 +62,7 @@ def test_measure_aruco_flow(client):
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["mode"] == "aruco"
-    assert body["backend"] == "photo:silhouette+pose"
+    assert body["backend"] == "photo:body-slice"
 
 
 @pytest.mark.slow
@@ -80,7 +80,7 @@ def test_measure_height_flow_photo(client):
     assert body["height_cm"] == 165
     assert body["weight_kg"] == 60
     assert body["girths_cm"]
-    assert body["backend"] == "photo:silhouette+pose"
+    assert body["backend"] == "photo:body-slice"
 
 
 @pytest.mark.slow

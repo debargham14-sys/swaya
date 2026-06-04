@@ -24,4 +24,10 @@ services:
       - key: SCAN_MAX_IMAGE_EDGE
         value: "1280"
       - key: POSE_SINGLE_SCALE
-        value: "1"
+        value: "0"
+      - key: POSE_FRONT_ONLY
+        value: "0"
+      - key: GRABCUT_WORK_EDGE
+        value: "512"
+      - key: GRABCUT_ITERS
+        value: "3"

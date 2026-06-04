@@ -9,12 +9,12 @@ The engine's 3D backend needs the SMPL-X body model, which is **not redistributa
    ```
 3. Verify:
    ```bash
-   python -c "from pipeline import smpl_backend as s; print(s.smplx_model_available())"  # -> True
+   python -c "from pipeline.measure import smpl_backend as s; print(s.smplx_model_available())"  # -> True
    ```
 
 Once present, the unified engine auto-uses the 3D mesh path:
 ```bash
-python -m pipeline.measure_engine --front F.jpg --side S.jpg --height 166 --weight 49 --prefer smplx
+python -m pipeline.measure.measure_engine --front F.jpg --side S.jpg --height 166 --weight 49 --prefer smplx
 ```
 
 ## For per-person shape from photos (not just the mean body)

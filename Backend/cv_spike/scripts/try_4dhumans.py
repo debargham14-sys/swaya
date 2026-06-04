@@ -12,8 +12,8 @@ import cv2
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pipeline import smpl_backend
-from pipeline.measure_engine import measure, print_result
+from pipeline.measure import smpl_backend
+from pipeline.measure.measure_engine import measure, print_result
 
 
 def main() -> None:

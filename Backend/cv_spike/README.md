@@ -104,7 +104,7 @@ python scripts/measure_with_height.py \
 ### Setup marker
 
 ```bash
-python -m pipeline.scale_reference --generate assets/aruco_50mm.png
+python -m pipeline.measure.scale_reference --generate assets/aruco_50mm.png
 ```
 
 Print at exactly **50 mm × 50 mm**.
@@ -145,6 +145,70 @@ curl -X POST http://localhost:8000/v1/measure \
 
 `GET /health` — reports `backends.four_d_humans`, `backends.smpl_cached`, etc.
 
+---
+
+## QC engine — finished-blouse quality check
+
+A separate, staged CV pipeline (`pipeline/qc/`) that inspects a finished blouse
+photographed flat inside the **standardized QC framework** (the perimeter strip
+torn from the A1 stencil) and compares it against the order's spec sheet.
+
+The framework is the same for every order: four corner ArUco fiducials
+(`DICT_4X4_50`, ids 0=TL, 1=TR, 2=BR, 3=BL) plus cm scales and magenta hem /
+symmetry lines. The fiducials give a px ↔ mm homography used as ground truth.
+
+### Pipeline stages
+
+1. ChArUco/ArUco detection + px↔mm calibration (`charuco.py`)
+2. Framework inner boundary → measurement zone (`framework.py`)
+3. Blouse silhouette extraction (`silhouette.py`)
+4. Direct dimensional measurement (`landmarks.py` + `dimensions.py`)
+5. Comparison vs spec with tolerance tiers (`compare.py`, `spec.py`)
+6. Symmetry analysis (`symmetry.py`)
+7. 47-check checklist; feature/seam/surface/drape checks scaffolded (`checklist.py`)
+8. QC report + annotated photo (`report.py`)
+
+### Tolerance tiers (mm)
+
+Per-dimension tolerances from the QC checklist, e.g. bust `(couture 3, bespoke 5,
+express 8)`, shoulder width `3` all tiers; otherwise a per-tier default
+`(couture 2, bespoke 3, express 5)`. Symmetry tolerance is `2 mm`.
+
+### Order spec sheet
+
+The spec carries target dimensions (mm), tier, variant, and expected features.
+In production it is loaded by `order_id` (from the cutting-region QR code); here
+it can be inline JSON or `pipeline/qc/specs/<order_id>.json`. See
+[pipeline/qc/specs/sample_order.json](pipeline/qc/specs/sample_order.json).
+
+### API
+
+```bash
+# inline spec
+curl -X POST http://localhost:8000/v1/qc \
+  -F "front=@qc_photo.jpg" \
+  -F 'spec={"order_id":"SW-2026-04827","tier":"bespoke","variant":"sleeveless","target_dims_mm":{"bust":860,"shoulder_width":380,"total_length":600}}'
+
+# or by order id (resolved via OrderRepository / specs folder)
+curl -X POST http://localhost:8000/v1/qc \
+  -F "front=@qc_photo.jpg" -F "order_id=sample_order"
+```
+
+Response: `overall_status` (pass/fail/needs_review), `score`, `calibration`,
+`dimensions`, `comparisons`, `symmetry`, `category_summary`, and the full
+47-item `checks` list.
+
+### CLI
+
+```bash
+python -m pipeline.qc.qc_engine --photo qc_photo.jpg --order-id sample_order --debug-dir out/
+python -m pipeline.qc.qc_engine --photo qc_photo.jpg --spec order.json --debug-dir out/
+```
+
+`--debug-dir` writes `qc_annotated.jpg`, `qc_silhouette.png`, and `qc_result.json`.
+
+---
+
 ## Tests
 
 ```bash
@@ -154,7 +218,9 @@ pytest tests/ -v
 ## Layout
 
 - `api/` — FastAPI service
-- `pipeline/` — measurement engine
+- `pipeline/measure/` — body-measurement engine (photo silhouettes + SMPL mesh)
+- `pipeline/qc/` — quality-check engine (framework calibration + spec comparison)
+- `pipeline/common/` — shared CV helpers used by both engines
 - `scripts/measure_with_height.py` — height flow CLI
 - `scripts/try_4dhumans.py` — 4D-Humans smoke test
 - `models/smpl/` — SMPL model for 4D-Humans

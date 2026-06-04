@@ -176,8 +176,16 @@ def _run_pose_landmarker(img: np.ndarray):
             return None, str(data["error"])
         return data, None
 
+    import os
+
+    single_scale = os.environ.get("POSE_SINGLE_SCALE", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    scales = (1.0,) if single_scale else (1.0, 0.75)
     last_err = "no_pose"
-    for scale in (1.0, 0.75):
+    for scale in scales:
         bgr = img if scale == 1.0 else cv2.resize(
             img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA,
         )

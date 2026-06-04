@@ -21,3 +21,7 @@ services:
         value: "1"
       - key: ENABLE_QC
         value: "0"
+      - key: SCAN_MAX_IMAGE_EDGE
+        value: "1280"
+      - key: POSE_SINGLE_SCALE
+        value: "1"

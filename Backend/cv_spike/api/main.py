@@ -15,11 +15,18 @@ Run:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    force=True,
+)
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware

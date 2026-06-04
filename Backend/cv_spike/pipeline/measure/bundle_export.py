@@ -58,6 +58,12 @@ def build_beta_bundle(
         dest = photos_dir / f"{view}{ext}"
         dest.write_bytes(src.read_bytes())
 
+    import logging
+    import time
+
+    _log = logging.getLogger("swaya.measure")
+    _t = time.perf_counter()
+    _log.info("bundle %s: measurement start (prefer=%s)", scan_id, prefer)
     result = measure(
         height_cm=height_cm,
         weight_kg=weight_kg,
@@ -68,6 +74,8 @@ def build_beta_bundle(
         ref_kind=ref_kind,
         ref_marker_mm=ref_marker_mm,
     )
+
+    _log.info("bundle %s: measurement done in %.1fs", scan_id, time.perf_counter() - _t)
 
     measurements_path = work_dir / "measurements.json"
     measurements_path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,6 +27,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from pipeline.common.mask_ops import clean_mask as _clean_mask
+
+logger = logging.getLogger("swaya.measure")
 
 # Anthropometric landmark heights as fraction of stature measured FROM THE FLOOR.
 # (population averages; good enough to locate horizontal measurement lines)
@@ -205,16 +209,27 @@ def _run_pose_landmarker(img: np.ndarray):
     return None, f"pose_error:{last_err}"
 
 
-def analyze_view(img: np.ndarray) -> tuple[np.ndarray, dict | None, str | None]:
+def _pose_front_only() -> bool:
+    import os
+
+    return os.environ.get("POSE_FRONT_ONLY", "0").strip().lower() in ("1", "true", "yes")
+
+
+def analyze_view(
+    img: np.ndarray, *, use_pose: bool = True
+) -> tuple[np.ndarray, dict | None, str | None]:
     """Return (clean person mask, pose landmarks, warning)."""
-    landmarks, mask = _run_pose_landmarker(img)
+    landmarks: dict | None = None
+    mask = None
     warn = None
-    if isinstance(mask, str):
-        warn = mask
-        mask = None
+    if use_pose:
+        landmarks, mask = _run_pose_landmarker(img)
+        if isinstance(mask, str):
+            warn = mask
+            mask = None
     if mask is None:
         mask = _segment_grabcut(img)
-        warn = warn or "segmentation_fallback_grabcut"
+        warn = warn or ("segmentation_grabcut_only" if not use_pose else "segmentation_fallback_grabcut")
     return _clean_mask(mask), landmarks, warn
 
 
@@ -312,7 +327,8 @@ def _load_profile_view(
     if img is None:
         res.warnings.append(f"{label}_unreadable")
         return None
-    mask, pose, warn = analyze_view(img)
+    # Cloud default: MediaPipe only on front; back/side use faster GrabCut masks.
+    mask, pose, warn = analyze_view(img, use_pose=not _pose_front_only())
     if warn:
         res.warnings.append(f"{label}:{warn}")
     top, bottom = _vertical_extent(mask)
@@ -390,7 +406,14 @@ def estimate(
     if front_note:
         res.warnings.append(f"front:{front_note}")
 
+    _t = time.perf_counter()
+    logger.info("measure: front pose+segmentation start (%dx%d)", front.shape[1], front.shape[0])
     fmask, fpose, fwarn = analyze_view(front)
+    logger.info(
+        "measure: front done in %.1fs (pose=%s)",
+        time.perf_counter() - _t,
+        "ok" if fpose else "none",
+    )
     if fwarn:
         res.warnings.append(f"front:{fwarn}")
     ft, fb = _vertical_extent(fmask)
@@ -417,7 +440,10 @@ def estimate(
     profiles: list[_ProfileView] = []
     for label, path in (("side", side_path), ("back", back_path)):
         if path:
+            _tp = time.perf_counter()
+            logger.info("measure: %s view start", label)
             pv = _load_profile_view(path, label, height_cm, ref_kind, ref_marker_mm, res)
+            logger.info("measure: %s view done in %.1fs", label, time.perf_counter() - _tp)
             if pv:
                 profiles.append(pv)
     side_scales = [p.cm_per_px for p in profiles if p.cm_per_px]
@@ -430,9 +456,12 @@ def estimate(
     side_pv = next((p for p in profiles if p.label == "side"), None)
     from pipeline.measure.slice_measure import estimate_torso_girths
 
+    _ts = time.perf_counter()
+    logger.info("measure: torso slice sweep start")
     samples, girth_levels, sweep_warn = estimate_torso_girths(
         fmask, fpose, fcx, res.cm_per_px_front, side_pv, res.cm_per_px_side,
     )
+    logger.info("measure: slice sweep done in %.1fs (%d levels)", time.perf_counter() - _ts, len(girth_levels))
     res.warnings.extend(sweep_warn)
 
     if len(girth_levels) >= 3:

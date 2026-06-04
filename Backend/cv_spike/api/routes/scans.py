@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -122,6 +126,7 @@ async def create_scan(
         downscale_scan_paths(paths)
 
         try:
+            t0 = time.perf_counter()
             doc = process_uploaded_scan(
                 paths=paths,
                 height_cm=height_cm,
@@ -135,6 +140,7 @@ async def create_scan(
                 consent_given=consent_given,
                 notes=notes,
             )
+            logger.info("scan %s processed in %.1fs", doc.get("scan_id"), time.perf_counter() - t0)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:

@@ -28,7 +28,7 @@ services:
       - key: POSE_FRONT_ONLY
         value: "0"
       - key: POSE_MIN_DETECTION_CONFIDENCE
-        value: "0.4"
+        value: "0.35"
       - key: POSE_MASK_THRESHOLD
         value: "0.4"
       - key: GRABCUT_WORK_EDGE

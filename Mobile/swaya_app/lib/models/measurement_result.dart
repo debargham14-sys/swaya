@@ -37,16 +37,8 @@ class MeasurementResult {
       calibrationProfile: json['calibration_profile'] as String?,
       calibrationTrainingScans: json['calibration_training_scans'] as int?,
       measurementsReliable: json['measurements_reliable'] as bool? ??
-          !_warningsUnreliable(json['warnings'] as List<dynamic>?),
+          (girthsCmRaw is Map && (girthsCmRaw as Map).isNotEmpty),
     );
-  }
-
-  static bool _warningsUnreliable(List<dynamic>? warnings) {
-    if (warnings == null) return false;
-    final text = warnings.map((e) => e.toString()).join(' ').toLowerCase();
-    return text.contains('measurements_unreliable') ||
-        text.contains('pose_not_detected') ||
-        text.contains('pose_error:');
   }
 
   final String mode;

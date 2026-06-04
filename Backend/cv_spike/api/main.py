@@ -141,6 +141,9 @@ async def measure_body(
         await save_upload(front, paths["front"])
         await save_upload(back, paths["back"])
         await save_upload(side, paths["side"])
+        from api.image_prep import prepare_scan_paths
+
+        prepare_scan_paths(paths)
 
         try:
             result = measure(

@@ -191,7 +191,7 @@ class _ScanDetailScreenState extends State<ScanDetailScreen> {
                   ),
             ),
           ],
-          if (!result.measurementsReliable || !result.hasGirths) ...[
+          if (!result.hasGirths) ...[
             const SizedBox(height: 12),
             Container(
               width: double.infinity,

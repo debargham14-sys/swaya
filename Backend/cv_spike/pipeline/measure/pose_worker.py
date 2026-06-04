@@ -139,8 +139,9 @@ def run_on_path(path: str) -> dict:
 
 def warmup() -> dict:
     """Load MediaPipe pose model once (call on API startup)."""
-    tiny = __import__("numpy").zeros((64, 48, 3), dtype=__import__("numpy").uint8)
-    return run_on_bgr(tiny)
+    # Realistic aspect ratio — avoids cold-start quirks on tiny dummy buffers.
+    buf = np.zeros((640, 480, 3), dtype=np.uint8)
+    return run_on_bgr(buf)
 
 
 def main(argv: list[str] | None = None) -> int:

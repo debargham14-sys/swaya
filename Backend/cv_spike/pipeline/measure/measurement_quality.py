@@ -1,29 +1,32 @@
-"""Reject and hide implausible girths (pose failure + loose clothing)."""
+"""Reject and hide implausible girths (front pose failure or dress blow-up)."""
 
 from __future__ import annotations
 
 from pipeline.measure.calibration import girths_are_plausible
 from pipeline.measure.measure_engine import EngineResult
 
-_POSE_DEGRADED = (
-    "pose_not_detected",
-    "pose_error:",
-    "segmentation_fallback_grabcut",
-    "segmentation_grabcut_only",
-    "slice_sweep:pose_fallback",
-)
 
-
-def cv_degraded(warnings: list[str]) -> bool:
-    text = " ".join(warnings).lower()
-    return any(m in text for m in _POSE_DEGRADED)
+def front_pose_failed(warnings: list[str]) -> bool:
+    """True only when the front view did not get pose landmarks/segmentation."""
+    for w in warnings:
+        s = str(w).lower()
+        if "pose_not_detected" in s:
+            return True
+        if s.startswith("front:") and "pose_error" in s:
+            return True
+    return False
 
 
 def apply_quality_gate(result: EngineResult) -> EngineResult:
-    """Keep raw girths for debugging but clear displayed values when untrustworthy."""
+    """Hide displayed girths only when values are impossible or front pose failed.
+
+    Side/back GrabCut fallback is OK if front pose produced plausible girths.
+    """
+    if os_disable_quality_gate():
+        return result
     if not result.girths_cm:
         return result
-    if girths_are_plausible(result.girths_cm) and not cv_degraded(result.warnings):
+    if girths_are_plausible(result.girths_cm) and not front_pose_failed(result.warnings):
         return result
 
     if not result.girths_raw_cm:
@@ -33,3 +36,13 @@ def apply_quality_gate(result: EngineResult) -> EngineResult:
     if "measurements_unreliable:retake_required" not in result.warnings:
         result.warnings.append("measurements_unreliable:retake_required")
     return result
+
+
+def os_disable_quality_gate() -> bool:
+    import os
+
+    return os.environ.get("DISABLE_MEASUREMENT_QUALITY_GATE", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )

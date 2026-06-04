@@ -1,4 +1,4 @@
-"""Resize uploads before CV (keeps Render/Railway scans within memory and time limits)."""
+"""Prepare phone uploads: EXIF orientation, then resize for CV."""
 
 from __future__ import annotations
 
@@ -14,6 +14,30 @@ def max_image_edge() -> int:
         return max(640, min(int(raw), 2560))
     except ValueError:
         return 1280
+
+
+def normalize_orientation(path: Path) -> tuple[Path, list[str]]:
+    """Apply EXIF rotation so OpenCV/MediaPipe see upright bodies (critical on iPhone)."""
+    warnings: list[str] = []
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return path, warnings
+
+    try:
+        with Image.open(path) as im:
+            rotated = ImageOps.exif_transpose(im)
+            if rotated is None:
+                rotated = im
+            rgb = rotated.convert("RGB")
+            out = path.with_suffix(".jpg")
+            rgb.save(out, format="JPEG", quality=92, optimize=True)
+            if out != path and path.exists():
+                path.unlink()
+            return out, warnings
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"{path.stem}:exif_failed:{str(exc)[:80]}")
+    return path, warnings
 
 
 def downscale_scan_paths(paths: dict[str, Path], *, max_edge: int | None = None) -> list[str]:
@@ -44,4 +68,15 @@ def downscale_scan_paths(paths: dict[str, Path], *, max_edge: int | None = None)
             path.unlink()
             paths[view] = out
         warnings.append(f"{view}:downscaled_{w}x{h}_to_{resized.shape[1]}x{resized.shape[0]}")
+    return warnings
+
+
+def prepare_scan_paths(paths: dict[str, Path]) -> list[str]:
+    """EXIF upright + downscale — run on every upload before measurement."""
+    warnings: list[str] = []
+    for view in list(paths.keys()):
+        out, w = normalize_orientation(paths[view])
+        paths[view] = out
+        warnings.extend(w)
+    warnings.extend(downscale_scan_paths(paths))
     return warnings

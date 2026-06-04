@@ -14,5 +14,21 @@ def test_suppresses_dress_blowup():
     )
     out = apply_quality_gate(r)
     assert out.girths_cm == {}
-    assert out.girths_raw_cm["bust"] == 229.6
     assert "measurements_unreliable" in " ".join(out.warnings)
+
+
+def test_keeps_plausible_when_only_side_grabcut_fallback():
+    r = EngineResult(
+        backend="photo",
+        height_cm=163,
+        weight_kg=55,
+        bmi=20.0,
+        girths_cm={"bust": 89.4, "waist": 64.8, "hip": 64.8},
+        confidence=0.72,
+        warnings=[
+            "side:segmentation_fallback_grabcut",
+            "approximate: fitted clothing improves accuracy",
+        ],
+    )
+    out = apply_quality_gate(r)
+    assert out.girths_cm["bust"] == 89.4

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from api.db.mongo import mongo_available, mongo_last_error
 from api.forms import MeasureMode, PreferKind, RefKind, resolve_measure_request, save_upload
-from api.image_prep import downscale_scan_paths
+from api.image_prep import prepare_scan_paths
 from api.services.scan_service import ScanService, process_uploaded_scan
 from pipeline.measure import smpl_backend
 
@@ -143,7 +143,9 @@ async def create_scan(
         await save_upload(front, paths["front"])
         await save_upload(back, paths["back"])
         await save_upload(side, paths["side"])
-        downscale_scan_paths(paths)
+        prep_warn = prepare_scan_paths(paths)
+        if prep_warn:
+            logger.info("scan image prep: %s", "; ".join(prep_warn))
 
         try:
             t0 = time.perf_counter()

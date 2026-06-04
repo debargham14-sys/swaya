@@ -54,9 +54,9 @@ class EngineResult:
         return {k: round(v / CM_PER_IN, 1) for k, v in self.girths_cm.items()}
 
     def to_dict(self) -> dict:
-        from pipeline.measure.measurement_quality import cv_degraded
+        from pipeline.measure.calibration import girths_are_plausible
 
-        reliable = bool(self.girths_cm) and not cv_degraded(self.warnings)
+        reliable = bool(self.girths_cm) and girths_are_plausible(self.girths_cm)
         return {
             "backend": self.backend,
             "height_cm": self.height_cm,

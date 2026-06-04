@@ -164,7 +164,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
               ],
             ],
           ),
-          if (!result.measurementsReliable || !result.hasGirths) ...[
+          if (!result.hasGirths) ...[
             const SizedBox(height: 12),
             Container(
               width: double.infinity,
@@ -175,8 +175,23 @@ class _ResultsScreenState extends State<ResultsScreen> {
                 border: Border.all(color: SwayaColors.warning.withValues(alpha: 0.5)),
               ),
               child: const Text(
-                'Could not measure reliably (pose or clothing issue). '
-                'Retake in fitted clothing with arms slightly out, or enter tape measurements below.',
+                'Could not measure this scan (pose or clothing). '
+                'Retake in fitted clothing, arms slightly out, plain background — or enter tape below.',
+                style: TextStyle(color: SwayaColors.warning, fontSize: 13),
+              ),
+            ),
+          ] else if (!result.measurementsReliable) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: SwayaColors.warning.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: SwayaColors.warning.withValues(alpha: 0.35)),
+              ),
+              child: const Text(
+                'Lower confidence — fitted clothing improves accuracy.',
                 style: TextStyle(color: SwayaColors.warning, fontSize: 13),
               ),
             ),

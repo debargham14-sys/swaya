@@ -107,6 +107,20 @@ class ScanApi {
     );
   }
 
+  Future<ScanRecord> getScan(String scanId) async {
+    final res = await _client.get(_uri('${AppConfig.scansPath}/$scanId'));
+    if (res.statusCode == 404) {
+      throw MeasureApiException('Scan not found', statusCode: 404);
+    }
+    if (res.statusCode != 200) {
+      throw MeasureApiException(
+        'Failed to load scan (${res.statusCode})',
+        statusCode: res.statusCode,
+      );
+    }
+    return ScanRecord.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
   Future<List<ScanRecord>> listScans({int limit = 30}) async {
     final res = await _client.get(_uri(AppConfig.scansPath, {'limit': '$limit'}));
     if (res.statusCode != 200) {

@@ -211,7 +211,14 @@ def _run_pose_landmarker(img: np.ndarray):
     def _call(bgr: np.ndarray, scale: float) -> tuple[dict | None, str | None]:
         del scale
         if use_subprocess:
-            return _run_pose_landmarker_subprocess(bgr)
+            data, err = _run_pose_landmarker_subprocess(bgr)
+            if data and not data.get("error"):
+                return data, err
+            # Subprocess can fail in sandboxes / low-memory; inline still works on macOS.
+            data = run_on_bgr(bgr)
+            if data.get("error"):
+                return None, err or str(data["error"])
+            return data, None
         data = run_on_bgr(bgr)
         if data.get("error"):
             return None, str(data["error"])
@@ -224,7 +231,7 @@ def _run_pose_landmarker(img: np.ndarray):
         "true",
         "yes",
     )
-    scales = (1.0,) if single_scale else (1.0, 0.75)
+    scales = (1.0,) if single_scale else (1.0, 0.85, 0.65)
     last_err = "no_pose"
     for scale in scales:
         bgr = img if scale == 1.0 else cv2.resize(

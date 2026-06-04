@@ -115,7 +115,8 @@ def scan_torso_slices(
     if torso is None:
         top, bottom = ml._vertical_extent(fmask)
         stat = max(1, bottom - top)
-        sh, hip = float(top + 0.12 * stat), float(top + 0.55 * stat)
+        # Narrow band (shoulder..upper hip) avoids measuring flared skirts when pose fails.
+        sh, hip = float(top + 0.14 * stat), float(top + 0.42 * stat)
         warnings.append("slice_sweep:pose_fallback_torso_band")
     else:
         sh, hip = torso

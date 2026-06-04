@@ -3,10 +3,9 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../models/scan_record.dart';
-import '../providers/capture_session.dart';
 import '../services/scan_api.dart';
 import '../theme/swaya_theme.dart';
-import '../utils/bundle_launcher.dart';
+import '../utils/scan_display.dart';
 import '../widgets/swaya_scaffold.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -97,32 +96,34 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (context, i) {
                           final scan = _scans![i];
-                          final waist = scan.result.girthsCm['waist'];
+                          final date = formatScanDate(scan.createdAt);
+                          final hasTape = scan.groundTruthCm.isNotEmpty;
                           return Material(
                             color: SwayaColors.elevated,
                             borderRadius: BorderRadius.circular(10),
                             child: ListTile(
                               title: Text(
-                                waist != null
-                                    ? 'Waist ${waist.toStringAsFixed(0)} cm'
-                                    : 'Scan',
+                                scan.displayName,
                                 style: const TextStyle(fontWeight: FontWeight.w600),
                               ),
                               subtitle: Text(
-                                scan.createdAt ?? scan.scanId,
+                                [
+                                  if (date.isNotEmpty) date,
+                                  if (hasTape) 'Tape saved',
+                                ].join(' · '),
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: SwayaColors.inkTertiary,
                                 ),
                               ),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.download_outlined),
-                                onPressed: () => openBetaBundleDownload(scan),
+                              trailing: const Icon(
+                                Icons.chevron_right,
+                                color: SwayaColors.inkTertiary,
                               ),
-                              onTap: () {
-                                context.read<CaptureSession>().setScan(scan);
-                                context.push('/scan/results');
-                              },
+                              onTap: () => context.push(
+                                '/history/scan/${scan.scanId}',
+                                extra: scan,
+                              ),
                             ),
                           );
                         },

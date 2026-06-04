@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../models/ground_truth.dart';
 import '../models/scan_record.dart';
 import '../providers/capture_session.dart';
 import '../services/measure_api.dart';
 import '../services/scan_api.dart';
 import '../theme/swaya_theme.dart';
 import '../utils/bundle_launcher.dart';
+import '../utils/scan_display.dart';
+import '../widgets/ground_truth_form.dart';
 import '../widgets/measurement_row.dart';
 import '../widgets/swaya_scaffold.dart';
 
@@ -40,19 +40,13 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
   void _loadGroundTruthFromScan(ScanRecord? scan) {
     if (scan == null) return;
-    void set(TextEditingController c, String key) {
-      final v = scan.groundTruthCm[key];
-      c.text = v != null ? _formatNum(v) : '';
-    }
-
-    set(_bustCtrl, 'bust');
-    set(_underbustCtrl, 'underbust');
-    set(_waistCtrl, 'waist');
-    set(_hipCtrl, 'hip');
-  }
-
-  static String _formatNum(double v) {
-    return v == v.roundToDouble() ? v.round().toString() : v.toStringAsFixed(1);
+    GroundTruthFormCard.loadFromScan(
+      scan,
+      bustCtrl: _bustCtrl,
+      underbustCtrl: _underbustCtrl,
+      waistCtrl: _waistCtrl,
+      hipCtrl: _hipCtrl,
+    );
   }
 
   double? _parse(TextEditingController c) {
@@ -99,11 +93,6 @@ class _ResultsScreenState extends State<ResultsScreen> {
     } finally {
       if (mounted) setState(() => _savingGt = false);
     }
-  }
-
-  static String _label(String key) {
-    if (key.isEmpty) return key;
-    return key[0].toUpperCase() + key.substring(1);
   }
 
   @override
@@ -218,7 +207,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                 for (final key in _order)
                   if (result.girthsCm[key] != null) ...[
                     MeasurementRow(
-                      label: _label(key),
+                      label: levelLabel(key),
                       cm: result.girthsCm[key]!,
                       inches: result.girthsIn[key],
                     ),
@@ -226,7 +215,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   ],
                 if (scan != null) ...[
                   const SizedBox(height: 16),
-                  _GroundTruthCard(
+                  GroundTruthFormCard(
                     bustCtrl: _bustCtrl,
                     underbustCtrl: _underbustCtrl,
                     waistCtrl: _waistCtrl,
@@ -286,139 +275,6 @@ class _ResultsScreenState extends State<ResultsScreen> {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _GroundTruthCard extends StatelessWidget {
-  const _GroundTruthCard({
-    required this.bustCtrl,
-    required this.underbustCtrl,
-    required this.waistCtrl,
-    required this.hipCtrl,
-    required this.saving,
-    required this.comparison,
-    required this.onSave,
-  });
-
-  final TextEditingController bustCtrl;
-  final TextEditingController underbustCtrl;
-  final TextEditingController waistCtrl;
-  final TextEditingController hipCtrl;
-  final bool saving;
-  final Map<String, GroundTruthComparison> comparison;
-  final VoidCallback onSave;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: SwayaColors.elevated,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: SwayaColors.accent.withValues(alpha: 0.35)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Ground truth (tape measure)',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Enter real tape measurements in cm. Each save refits calibration so this scan '
-            'and the next ones are closer to your tape.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: SwayaColors.inkSecondary,
-                ),
-          ),
-          const SizedBox(height: 16),
-          _GtField(label: 'Bust', controller: bustCtrl),
-          const SizedBox(height: 10),
-          _GtField(label: 'Underbust', controller: underbustCtrl),
-          const SizedBox(height: 10),
-          _GtField(label: 'Waist', controller: waistCtrl),
-          const SizedBox(height: 10),
-          _GtField(label: 'Hip', controller: hipCtrl),
-          if (comparison.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            Text(
-              'Error vs estimate',
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: SwayaColors.inkTertiary,
-                  ),
-            ),
-            const SizedBox(height: 6),
-            ...comparison.entries.map((e) {
-              final c = e.value;
-              final err = c.errorCm;
-              final sign = err >= 0 ? '+' : '';
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  '${e.key}: tape ${c.tapeCm.toStringAsFixed(1)} cm, est ${c.predictedCm.toStringAsFixed(1)} cm ($sign${err.toStringAsFixed(1)} cm)',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: SwayaColors.inkSecondary,
-                      ),
-                ),
-              );
-            }),
-          ],
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: saving ? null : onSave,
-              child: saving
-                  ? const SizedBox(
-                      height: 22,
-                      width: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Save ground truth'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GtField extends StatelessWidget {
-  const _GtField({required this.label, required this.controller});
-
-  final String label;
-  final TextEditingController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 88,
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-        ),
-        Expanded(
-          child: TextField(
-            controller: controller,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
-            ],
-            decoration: const InputDecoration(
-              hintText: 'cm',
-              isDense: true,
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

@@ -21,6 +21,37 @@ CM_PER_IN = 2.54
 GIRTH_LEVELS = ("bust", "underbust", "waist", "hip")
 LEVEL_ALIASES = {"chest": "bust", "seat": "hip", "hips": "hip"}
 
+# Physiological bounds for training / applying global calibration.
+MIN_PLAUSIBLE_GIRTH_CM = 45.0
+MAX_PLAUSIBLE_GIRTH_CM = 130.0
+MIN_CALIBRATION_SCALE = 0.75
+MAX_CALIBRATION_SCALE = 1.25
+MAX_CALIBRATION_OFFSET_CM = 25.0
+
+
+def girths_are_plausible(girths_cm: dict[str, float]) -> bool:
+    """Reject segmentation blow-ups (e.g. flared dress with no pose) and bad tape."""
+    vals = [float(v) for v in girths_cm.values() if v is not None and v > 0]
+    if not vals:
+        return False
+    if any(v < MIN_PLAUSIBLE_GIRTH_CM or v > MAX_PLAUSIBLE_GIRTH_CM for v in vals):
+        return False
+    if max(vals) / min(vals) > 2.8:
+        return False
+    return True
+
+
+def profile_is_sane(profile: CalibrationProfile) -> bool:
+    if not girths_are_plausible(profile.raw_girths_cm):
+        return False
+    if not girths_are_plausible(profile.anchors_cm):
+        return False
+    if profile.scale < MIN_CALIBRATION_SCALE or profile.scale > MAX_CALIBRATION_SCALE:
+        return False
+    if abs(profile.offset_cm) > MAX_CALIBRATION_OFFSET_CM:
+        return False
+    return True
+
 
 @dataclass
 class CalibrationProfile:

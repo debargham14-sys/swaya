@@ -7,6 +7,8 @@ import '../screens/capture_guide_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/height_screen.dart';
 import '../screens/history_screen.dart';
+import '../screens/scan_detail_screen.dart';
+import '../models/scan_record.dart';
 import '../screens/home_screen.dart';
 import '../screens/onboarding_screen.dart';
 import '../screens/processing_screen.dart';
@@ -100,6 +102,16 @@ GoRouter createAppRouter() {
       GoRoute(
         path: '/scan/assistant',
         builder: (context, state) => const ChatScreen(),
+      ),
+      GoRoute(
+        path: '/history/scan/:scanId',
+        builder: (context, state) {
+          final extra = state.extra;
+          return ScanDetailScreen(
+            scanId: state.pathParameters['scanId']!,
+            initialScan: extra is ScanRecord ? extra : null,
+          );
+        },
       ),
     ],
   );

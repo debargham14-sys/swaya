@@ -53,3 +53,7 @@ class CalibrationRepository:
             },
             upsert=True,
         )
+
+    def clear_global(self) -> bool:
+        result = self._col.delete_one({"_id": GLOBAL_PROFILE_ID})
+        return result.deleted_count > 0

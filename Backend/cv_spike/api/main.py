@@ -44,6 +44,7 @@ from api.forms import (  # noqa: E402
     resolve_measure_request,
     save_upload,
 )
+from api.routes.calibration import router as calibration_router  # noqa: E402
 from api.routes.scans import router as scans_router  # noqa: E402
 from pipeline.measure import smpl_backend  # noqa: E402
 from pipeline.measure.measure_engine import measure  # noqa: E402
@@ -67,6 +68,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(scans_router)
+app.include_router(calibration_router)
 
 if _ENABLE_QC:
     from api.routes.qc import router as qc_router  # noqa: E402

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -31,6 +32,22 @@ _landmarker = None
 _landmarker_lock = threading.Lock()
 
 
+def _pose_min_detection_confidence() -> float:
+    raw = os.environ.get("POSE_MIN_DETECTION_CONFIDENCE", "0.4").strip()
+    try:
+        return max(0.2, min(float(raw), 0.9))
+    except ValueError:
+        return 0.4
+
+
+def _pose_mask_threshold() -> float:
+    raw = os.environ.get("POSE_MASK_THRESHOLD", "0.4").strip()
+    try:
+        return max(0.2, min(float(raw), 0.8))
+    except ValueError:
+        return 0.4
+
+
 def _detect(bgr: np.ndarray) -> dict:
     import mediapipe as mp
     from mediapipe.tasks import python as mptp
@@ -45,6 +62,8 @@ def _detect(bgr: np.ndarray) -> dict:
                 running_mode=vision.RunningMode.IMAGE,
                 output_segmentation_masks=True,
                 num_poses=1,
+                min_pose_detection_confidence=_pose_min_detection_confidence(),
+                min_pose_presence_confidence=_pose_min_detection_confidence(),
             )
             _landmarker = vision.PoseLandmarker.create_from_options(opts)
         landmarker = _landmarker
@@ -64,7 +83,7 @@ def _detect(bgr: np.ndarray) -> dict:
         m = np.array(res.segmentation_masks[0].numpy_view(), copy=True, dtype=np.float32)
         if m.ndim == 3:
             m = m[:, :, 0]
-        mask = (m > 0.5).astype(np.uint8) * 255
+        mask = (m > _pose_mask_threshold()).astype(np.uint8) * 255
         ok, buf = cv2.imencode(".png", mask)
         if ok:
             out["mask_b64"] = base64.b64encode(buf.tobytes()).decode("ascii")

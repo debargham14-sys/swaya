@@ -94,6 +94,7 @@ def _from_markerless(mk: "markerless.MarkerlessResult", weight_kg: float) -> Eng
         weight_kg=weight_kg,
         bmi=mk.bmi,
         girths_cm=girths,
+        girths_raw_cm=dict(girths),
         confidence=conf,
         warnings=list(mk.warnings) + ["approximate: fitted clothing improves accuracy"],
     )

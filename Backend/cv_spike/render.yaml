@@ -22,12 +22,16 @@ services:
       - key: ENABLE_QC
         value: "0"
       - key: SCAN_MAX_IMAGE_EDGE
-        value: "1536"
+        value: "1920"
       - key: POSE_SINGLE_SCALE
         value: "0"
       - key: POSE_FRONT_ONLY
         value: "0"
+      - key: POSE_MIN_DETECTION_CONFIDENCE
+        value: "0.4"
+      - key: POSE_MASK_THRESHOLD
+        value: "0.4"
       - key: GRABCUT_WORK_EDGE
-        value: "512"
+        value: "768"
       - key: GRABCUT_ITERS
-        value: "3"
+        value: "4"

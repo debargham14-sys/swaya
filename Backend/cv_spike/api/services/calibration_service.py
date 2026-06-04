@@ -12,10 +12,18 @@ from pipeline.measure.calibration import (
     CalibrationProfile,
     apply_girth_calibration,
     fit_profile,
+    girths_are_plausible,
+    profile_is_sane,
 )
 from pipeline.measure.measure_engine import EngineResult
 
 logger = logging.getLogger("swaya.calibration")
+
+_POSE_DEGRADED_MARKERS = (
+    "pose_not_detected",
+    "pose_error:no_pose",
+    "slice_sweep:pose_fallback",
+)
 
 
 def _raw_girths_from_measurements(measurements: dict[str, Any]) -> dict[str, float]:
@@ -26,14 +34,21 @@ def _raw_girths_from_measurements(measurements: dict[str, Any]) -> dict[str, flo
     return {k: float(v) for k, v in girths.items() if k in GIRTH_LEVELS}
 
 
+def _warnings_indicate_bad_cv(warnings: list[str] | None) -> bool:
+    if not warnings:
+        return False
+    text = " ".join(str(w) for w in warnings).lower()
+    return any(m in text for m in _POSE_DEGRADED_MARKERS)
+
+
 def collect_training_data(limit: int = 500) -> tuple[dict[str, float], dict[str, float], int]:
-    """Aggregate (raw, tape) pairs from all scans that have ground truth."""
+    """Aggregate (raw, tape) pairs from scans with plausible CV + ground truth."""
     repo = ScanRepository()
     col = repo._col  # noqa: SLF001 — training query
     cursor = col.find(
         {"ground_truth_cm": {"$exists": True, "$ne": {}}},
         {"measurements": 1, "ground_truth_cm": 1},
-    ).sort("ground_truth_cm_saved_at", -1).limit(limit)
+    ).sort("ground_truth_saved_at", -1).limit(limit)
 
     raw_all: dict[str, list[float]] = {k: [] for k in GIRTH_LEVELS}
     tape_all: dict[str, list[float]] = {k: [] for k in GIRTH_LEVELS}
@@ -42,8 +57,12 @@ def collect_training_data(limit: int = 500) -> tuple[dict[str, float], dict[str,
     for doc in cursor:
         gt = doc.get("ground_truth_cm") or {}
         m = doc.get("measurements") or {}
+        if _warnings_indicate_bad_cv(m.get("warnings")):
+            continue
         raw = _raw_girths_from_measurements(m)
-        if not raw or not gt:
+        if not raw or not gt or not girths_are_plausible(raw):
+            continue
+        if not girths_are_plausible({k: float(v) for k, v in gt.items() if v}):
             continue
         scan_count += 1
         for level in GIRTH_LEVELS:
@@ -51,7 +70,6 @@ def collect_training_data(limit: int = 500) -> tuple[dict[str, float], dict[str,
                 raw_all[level].append(float(raw[level]))
                 tape_all[level].append(float(gt[level]))
 
-    # Mean per level across scans (stable when multiple subjects).
     anchors: dict[str, float] = {}
     raw_mean: dict[str, float] = {}
     for level in GIRTH_LEVELS:
@@ -68,7 +86,7 @@ def collect_training_data(limit: int = 500) -> tuple[dict[str, float], dict[str,
 def retrain_global_profile() -> CalibrationProfile | None:
     raw_mean, anchors, scan_count = collect_training_data()
     if not anchors or not raw_mean:
-        logger.info("calibration: no ground-truth scans yet — skipping fit")
+        logger.info("calibration: no eligible ground-truth scans — skipping fit")
         return None
 
     profile = fit_profile(
@@ -77,6 +95,15 @@ def retrain_global_profile() -> CalibrationProfile | None:
         name="global",
         notes=f"fit from {scan_count} scans with tape ground truth",
     )
+    if not profile_is_sane(profile):
+        logger.warning(
+            "calibration: rejected insane profile scale=%.3f offset=%.1f raw=%s",
+            profile.scale,
+            profile.offset_cm,
+            profile.raw_girths_cm,
+        )
+        return None
+
     pair_count = len(set(anchors) & set(raw_mean))
     CalibrationRepository().save_global(
         profile,
@@ -93,19 +120,37 @@ def retrain_global_profile() -> CalibrationProfile | None:
     return profile
 
 
+def clear_global_profile() -> bool:
+    return CalibrationRepository().clear_global()
+
+
 def get_global_profile() -> CalibrationProfile | None:
-    return CalibrationRepository().get_global()
+    profile = CalibrationRepository().get_global()
+    if profile and not profile_is_sane(profile):
+        logger.warning("calibration: ignoring stale insane global profile in DB")
+        return None
+    return profile
+
+
+def _should_apply_profile(result: EngineResult, profile: CalibrationProfile) -> bool:
+    if _warnings_indicate_bad_cv(result.warnings):
+        return False
+    if not girths_are_plausible(result.girths_cm):
+        return False
+    return profile_is_sane(profile)
 
 
 def apply_to_engine_result(result: EngineResult) -> EngineResult:
     profile = get_global_profile()
+    if not result.girths_raw_cm and result.girths_cm:
+        result.girths_raw_cm = dict(result.girths_cm)
     if not profile:
-        if not result.girths_raw_cm and result.girths_cm:
-            result.girths_raw_cm = dict(result.girths_cm)
+        return result
+    if not _should_apply_profile(result, profile):
+        if "calibration_skipped:cv_degraded" not in result.warnings:
+            result.warnings.append("calibration_skipped:cv_degraded")
         return result
 
-    if not result.girths_raw_cm:
-        result.girths_raw_cm = dict(result.girths_cm)
     result.girths_cm = apply_girth_calibration(result.girths_raw_cm, profile)
     result.calibration_profile = profile.name
     if "calibrated:global_affine" not in result.warnings:
@@ -119,7 +164,9 @@ def apply_to_measurements_dict(measurements: dict[str, Any]) -> dict[str, Any]:
         return measurements
 
     raw = _raw_girths_from_measurements(measurements)
-    if not raw:
+    if not raw or not girths_are_plausible(raw):
+        return measurements
+    if _warnings_indicate_bad_cv(measurements.get("warnings")):
         return measurements
 
     out = dict(measurements)
@@ -142,7 +189,7 @@ def refresh_scan_after_ground_truth(scan_id: str) -> dict[str, Any] | None:
         return None
 
     m = dict(doc.get("measurements") or {})
-    if profile:
+    if profile and not _warnings_indicate_bad_cv(m.get("warnings")):
         m = apply_to_measurements_dict(m)
     else:
         m.setdefault("girths_raw_cm", _raw_girths_from_measurements(m))

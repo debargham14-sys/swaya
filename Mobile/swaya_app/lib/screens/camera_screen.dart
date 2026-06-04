@@ -31,8 +31,8 @@ class _CameraScreenState extends State<CameraScreen> {
         source: source,
         preferredCameraDevice: CameraDevice.rear,
         imageQuality: 92,
-        maxWidth: 1536,
-        maxHeight: 2048,
+        maxWidth: 1920,
+        maxHeight: 2560,
       );
       if (picked == null || !mounted) return;
       final bytes = await picked.readAsBytes();

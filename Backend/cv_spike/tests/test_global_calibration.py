@@ -4,7 +4,10 @@ from pipeline.measure.calibration import apply_girth_calibration, fit_profile
 from pipeline.measure.measure_engine import EngineResult
 
 
-def test_apply_to_engine_result_without_profile():
+def test_apply_to_engine_result_without_profile(monkeypatch):
+    from api.services import calibration_service
+
+    monkeypatch.setattr(calibration_service, "get_global_profile", lambda: None)
     from api.services.calibration_service import apply_to_engine_result
 
     r = EngineResult(

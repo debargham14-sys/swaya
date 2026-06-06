@@ -39,13 +39,13 @@ services:
       - key: ENABLE_QC
         value: "0"
       - key: SCAN_MAX_IMAGE_EDGE
-        value: "1920"
+        value: "2048"
       - key: POSE_SINGLE_SCALE
         value: "0"
       - key: POSE_FRONT_ONLY
         value: "0"
       - key: POSE_MIN_DETECTION_CONFIDENCE
-        value: "0.35"
+        value: "0.30"
       - key: POSE_MASK_THRESHOLD
         value: "0.4"
       - key: GRABCUT_WORK_EDGE

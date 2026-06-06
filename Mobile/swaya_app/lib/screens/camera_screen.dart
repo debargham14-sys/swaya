@@ -27,12 +27,11 @@ class _CameraScreenState extends State<CameraScreen> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
+      // Full resolution — server applies EXIF upright + downscale (iPhone uploads).
       final picked = await _picker.pickImage(
         source: source,
         preferredCameraDevice: CameraDevice.rear,
-        imageQuality: 92,
-        maxWidth: 1920,
-        maxHeight: 2560,
+        imageQuality: 95,
       );
       if (picked == null || !mounted) return;
       final bytes = await picked.readAsBytes();
@@ -51,6 +50,17 @@ class _CameraScreenState extends State<CameraScreen> {
       // Show the captured photo with the framed grid for review; user taps Next.
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  static String _captureHint(CaptureView view) {
+    switch (view) {
+      case CaptureView.front:
+        return 'Step back — fit your whole body inside the box, face camera';
+      case CaptureView.back:
+        return 'Same distance — back to camera, whole body in the box';
+      case CaptureView.side:
+        return 'Turn 90° — full side profile, head and feet inside the box';
     }
   }
 
@@ -75,17 +85,18 @@ class _CameraScreenState extends State<CameraScreen> {
           children: [
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
                 child: Center(
                   child: AspectRatio(
-                    aspectRatio: 3 / 4,
+                    // Tall portrait frame — matches phone camera; fits head-to-toe.
+                    aspectRatio: 9 / 16,
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(12),
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
                           if (existing != null)
-                            CapturedPhotoImage(photo: existing, fit: BoxFit.cover)
+                            CapturedPhotoImage(photo: existing, fit: BoxFit.contain)
                           else
                             const ColoredBox(color: SwayaColors.elevated),
                           if (existing == null)
@@ -126,7 +137,7 @@ class _CameraScreenState extends State<CameraScreen> {
                               ),
                               child: Text(
                                 existing == null
-                                    ? 'Align your whole body inside the frame'
+                                    ? _captureHint(widget.view)
                                     : 'Looks good? Tap Next, or retake with the shutter',
                                 textAlign: TextAlign.center,
                                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -201,37 +212,87 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 }
 
-/// Rule-of-thirds composition grid plus a soft body-alignment guide.
+/// Full-body alignment frame — tall box so users step back and include head + feet.
 class _CaptureGridPainter extends CustomPainter {
   const _CaptureGridPainter();
 
+  static const _marginH = 0.04;
+  static const _marginV = 0.02;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final grid = Paint()
-      ..color = Colors.white.withValues(alpha: 0.30)
-      ..strokeWidth = 1;
-    for (var i = 1; i < 3; i++) {
-      final dx = size.width * i / 3;
-      canvas.drawLine(Offset(dx, 0), Offset(dx, size.height), grid);
-      final dy = size.height * i / 3;
-      canvas.drawLine(Offset(0, dy), Offset(size.width, dy), grid);
-    }
+    final dim = Paint()
+      ..color = Colors.black.withValues(alpha: 0.35)
+      ..style = PaintingStyle.fill;
 
-    final guide = Paint()
-      ..color = SwayaColors.accentHighlight.withValues(alpha: 0.9)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    final guideWidth = size.width * 0.42;
-    final guideHeight = size.height * 0.82;
+    final guideW = size.width * (1 - 2 * _marginH);
+    final guideH = size.height * (1 - 2 * _marginV);
     final rect = Rect.fromCenter(
       center: Offset(size.width / 2, size.height / 2),
-      width: guideWidth,
-      height: guideHeight,
+      width: guideW,
+      height: guideH,
     );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, Radius.circular(guideWidth / 2)),
-      guide,
+    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(10));
+
+    // Darken outside the capture box so the frame reads clearly.
+    final outer = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    final inner = Path()..addRRect(rrect);
+    canvas.drawPath(
+      Path.combine(PathOperation.difference, outer, inner),
+      dim,
     );
+
+    final border = Paint()
+      ..color = SwayaColors.accentHighlight.withValues(alpha: 0.95)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5;
+    canvas.drawRRect(rrect, border);
+
+    // Corner ticks (viewfinder style).
+    final tick = Paint()
+      ..color = Colors.white.withValues(alpha: 0.9)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    const tickLen = 22.0;
+    final corners = [
+      rect.topLeft,
+      rect.topRight,
+      rect.bottomLeft,
+      rect.bottomRight,
+    ];
+    for (final c in corners) {
+      final isLeft = c.dx < size.width / 2;
+      final isTop = c.dy < size.height / 2;
+      canvas.drawLine(
+        c,
+        c + Offset(isLeft ? tickLen : -tickLen, 0),
+        tick,
+      );
+      canvas.drawLine(
+        c,
+        c + Offset(0, isTop ? tickLen : -tickLen),
+        tick,
+      );
+    }
+
+    final label = TextPainter(
+      text: const TextSpan(
+        text: 'HEAD',
+        style: TextStyle(color: Colors.white70, fontSize: 10, letterSpacing: 1),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    label.paint(canvas, Offset(rect.center.dx - label.width / 2, rect.top + 6));
+
+    final feet = TextPainter(
+      text: const TextSpan(
+        text: 'FEET',
+        style: TextStyle(color: Colors.white70, fontSize: 10, letterSpacing: 1),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    feet.paint(canvas, Offset(rect.center.dx - feet.width / 2, rect.bottom - 18));
   }
 
   @override

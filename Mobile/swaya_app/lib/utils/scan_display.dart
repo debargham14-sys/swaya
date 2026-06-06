@@ -28,3 +28,18 @@ String levelLabel(String key) {
   if (key.isEmpty) return key;
   return key[0].toUpperCase() + key.substring(1);
 }
+
+/// User-facing hint when the API returned no girths (quality gate rejected the scan).
+String measurementRetakeHint(List<String> warnings) {
+  final w = warnings.join(' ').toLowerCase();
+  if (w.contains('pose_not_detected') || w.contains('pose_error')) {
+    return 'Front pose was not detected. Step back until head and feet are in frame, '
+        'stand straight facing the camera, arms slightly away from your body, good lighting.';
+  }
+  if (w.contains('measurements_unreliable') || w.contains('unreadable')) {
+    return 'Body outline could not be measured (often loose or layered clothing). '
+        'Wear a fitted top and trousers, plain background, then retake all three photos.';
+  }
+  return 'Could not measure this scan. Retake with full body in frame (head to feet), '
+      'fitted clothing, arms slightly out, plain background — or enter tape measurements below.';
+}

@@ -9,10 +9,11 @@ class CaptureGuideScreen extends StatelessWidget {
   const CaptureGuideScreen({super.key});
 
   static const _tips = [
-    'Full body visible head to toe',
-    'Arms relaxed at your sides',
-    'Fitted or minimal clothing',
-    'Plain background if possible',
+    'Step back — head and feet must both be in every photo',
+    'Front: face the camera; Side: turn 90° (true profile)',
+    'Arms slightly away from body (not tight at sides)',
+    'Fitted clothing (loose kurta/saree often fails)',
+    'Plain wall background, even lighting',
   ];
 
   @override

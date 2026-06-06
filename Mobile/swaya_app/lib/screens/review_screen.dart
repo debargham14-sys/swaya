@@ -64,12 +64,15 @@ class ReviewScreen extends StatelessWidget {
                   child: Column(
                     children: [
                       AspectRatio(
-                        aspectRatio: 3 / 4,
+                        aspectRatio: 9 / 16,
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: photo != null
-                              ? CapturedPhotoImage(photo: photo, fit: BoxFit.cover)
-                              : Container(color: SwayaColors.elevated),
+                          child: ColoredBox(
+                            color: SwayaColors.chrome,
+                            child: photo != null
+                                ? CapturedPhotoImage(photo: photo, fit: BoxFit.contain)
+                                : Container(color: SwayaColors.elevated),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 6),

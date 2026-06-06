@@ -192,10 +192,20 @@ class _ResultsScreenState extends State<ResultsScreen> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: SwayaColors.warning.withValues(alpha: 0.5)),
               ),
-              child: const Text(
-                'Could not measure this scan (pose or clothing). '
-                'Retake in fitted clothing, arms slightly out, plain background — or enter tape below.',
-                style: TextStyle(color: SwayaColors.warning, fontSize: 13),
+              child: Text(
+                measurementRetakeHint(result.warnings),
+                style: const TextStyle(color: SwayaColors.warning, fontSize: 13),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  session.resetForNewScan();
+                  context.go('/scan/height');
+                },
+                child: const Text('Retake photos'),
               ),
             ),
           ] else if (!result.measurementsReliable) ...[

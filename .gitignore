@@ -5,3 +5,10 @@ __pycache__/
 .venv/
 venv/
 assets/
+
+# Flutter
+Mobile/swaya_app/.dart_tool/
+Mobile/swaya_app/.flutter-plugins
+Mobile/swaya_app/.flutter-plugins-dependencies
+Mobile/swaya_app/build/
+Mobile/swaya_app/.packages

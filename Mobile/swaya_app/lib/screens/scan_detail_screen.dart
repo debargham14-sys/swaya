@@ -7,6 +7,7 @@ import '../services/measure_api.dart';
 import '../services/scan_api.dart';
 import '../theme/swaya_theme.dart';
 import '../utils/bundle_launcher.dart';
+import '../utils/fit_suggestion_flow.dart';
 import '../utils/scan_display.dart';
 import '../widgets/ground_truth_form.dart';
 import '../widgets/measurement_row.dart';
@@ -81,9 +82,12 @@ class _ScanDetailScreenState extends State<ScanDetailScreen> {
     }
   }
 
+  static const _maxGirthCm = 250.0;
+
   double? _parse(TextEditingController c) {
     final v = double.tryParse(c.text.trim());
     if (v == null || v <= 0) return null;
+    if (v > _maxGirthCm) return null;
     return v;
   }
 
@@ -95,8 +99,16 @@ class _ScanDetailScreenState extends State<ScanDetailScreen> {
     final waist = _parse(_waistCtrl);
     final hip = _parse(_hipCtrl);
     if (bust == null && underbust == null && waist == null && hip == null) {
+      final anyEntered = [_bustCtrl, _underbustCtrl, _waistCtrl, _hipCtrl]
+          .any((c) => c.text.trim().isNotEmpty);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter at least one tape measurement (cm)')),
+        SnackBar(
+          content: Text(
+            anyEntered
+                ? 'Each tape value must be between 1 and $_maxGirthCm cm'
+                : 'Enter at least one tape measurement (cm)',
+          ),
+        ),
       );
       return;
     }
@@ -116,9 +128,22 @@ class _ScanDetailScreenState extends State<ScanDetailScreen> {
       if (session.lastScan?.scanId == updated.scanId) {
         session.setScan(updated);
       }
+      final calibrated = updated.result.isCalibrated;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ground truth saved')),
+        SnackBar(
+          content: Text(
+            calibrated
+                ? 'Ground truth saved — measurements recalibrated'
+                : 'Ground truth saved',
+          ),
+        ),
       );
+      if (updated.calibrationUpdated && updated.result.hasGirths) {
+        await showFitSuggestionsAfterCalibration(
+          context,
+          measurements: updated.result,
+        );
+      }
     } on MeasureApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));

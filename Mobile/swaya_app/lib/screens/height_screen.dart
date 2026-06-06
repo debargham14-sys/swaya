@@ -30,12 +30,29 @@ class _HeightScreenState extends State<HeightScreen> {
     super.dispose();
   }
 
+  static const _minHeightCm = 80.0;
+  static const _maxHeightCm = 250.0;
+  static const _maxWeightKg = 300.0;
+
   void _continue() {
     final session = context.read<CaptureSession>();
     final height = double.tryParse(_heightController.text.trim());
     if (height == null || height <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter a valid height in cm')),
+      );
+      return;
+    }
+    if (height < _minHeightCm || height > _maxHeightCm) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Height must be between $_minHeightCm and $_maxHeightCm cm')),
+      );
+      return;
+    }
+    final weight = double.tryParse(_weightController.text.trim());
+    if (weight != null && (weight <= 0 || weight > _maxWeightKg)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Weight must be between 1 and $_maxWeightKg kg, or leave blank')),
       );
       return;
     }
@@ -46,7 +63,7 @@ class _HeightScreenState extends State<HeightScreen> {
       return;
     }
     session.setHeight(height);
-    session.setWeight(double.tryParse(_weightController.text.trim()));
+    session.setWeight(weight);
     session.setSubjectLabel(_subjectController.text.trim());
     session.setCollectorId(_collectorController.text.trim());
     session.setConsent(_consent);

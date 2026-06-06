@@ -1,9 +1,8 @@
 """Persist scan sessions in MongoDB.
 
-Bundle ZIPs and raw capture photos are stored in GridFS by default
-(``SCAN_STORAGE_BACKEND=gridfs``) so every byte lives in the cloud database and
-survives hosts with an ephemeral filesystem. Set ``SCAN_STORAGE_BACKEND=disk``
-to keep the legacy on-disk ZIP behaviour for local development.
+Bundle ZIPs are stored in GridFS (or disk for local dev).
+Raw capture photos use GridFS by default, or S3 when ``PHOTO_STORAGE=s3``
+(MongoDB stores ``s3_key`` / ``s3_url`` links per view).
 """
 
 from __future__ import annotations
@@ -14,13 +13,9 @@ from typing import Any, BinaryIO
 from uuid import uuid4
 
 from api.db.mongo import get_bucket, get_db
-from api.settings import SCAN_STORAGE_BACKEND, SCAN_STORAGE_DIR
-
-_CONTENT_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
-
-
-def _content_type(filename: str) -> str:
-    return _CONTENT_TYPES.get(Path(filename).suffix.lower(), "application/octet-stream")
+from api.settings import PHOTO_STORAGE, SCAN_STORAGE_BACKEND, SCAN_STORAGE_DIR
+from api.storage.photo_store import open_photo as open_stored_photo
+from api.storage.photo_store import serialize_photos, store_photos
 
 
 class ScanRepository:
@@ -83,7 +78,8 @@ class ScanRepository:
                 metadata={"scan_id": scan_id, "kind": "bundle"},
             )
             doc["bundle_file_id"] = bundle_id
-            doc["photos"] = self._store_photos_gridfs(bucket, scan_id, photo_files or {})
+            doc["photo_storage"] = PHOTO_STORAGE
+            doc["photos"] = store_photos(scan_id, photo_files or {})
         else:
             storage = SCAN_STORAGE_DIR / scan_id
             storage.mkdir(parents=True, exist_ok=True)
@@ -93,26 +89,6 @@ class ScanRepository:
 
         self._col.insert_one(doc)
         return self._serialize(doc)
-
-    def _store_photos_gridfs(
-        self, bucket: Any, scan_id: str, photo_files: dict[str, Path]
-    ) -> dict[str, Any]:
-        photos: dict[str, Any] = {}
-        for view, path in photo_files.items():
-            if not path or not Path(path).is_file():
-                continue
-            filename = f"{view}{Path(path).suffix or '.jpg'}"
-            file_id = bucket.upload_from_stream(
-                f"{scan_id}/photos/{filename}",
-                Path(path).read_bytes(),
-                metadata={"scan_id": scan_id, "kind": "photo", "view": view},
-            )
-            photos[view] = {
-                "file_id": file_id,
-                "filename": filename,
-                "content_type": _content_type(filename),
-            }
-        return photos
 
     def get_scan(self, scan_id: str) -> dict[str, Any] | None:
         doc = self._col.find_one({"_id": scan_id})
@@ -169,15 +145,11 @@ class ScanRepository:
         return (path, filename, size) if path.is_file() else None
 
     def open_photo(self, scan_id: str, view: str) -> tuple[BinaryIO, str, str] | None:
-        """Return (stream, filename, content_type) for a raw capture photo (GridFS only)."""
+        """Return (stream, filename, content_type) for a raw capture photo."""
         doc = self._col.find_one({"_id": scan_id})
         if not doc:
             return None
-        photo = (doc.get("photos") or {}).get(view)
-        if not photo or photo.get("file_id") is None:
-            return None
-        stream = get_bucket().open_download_stream(photo["file_id"])
-        return stream, photo.get("filename", f"{view}.jpg"), photo.get("content_type", "image/jpeg")
+        return open_stored_photo(doc, view)
 
     @staticmethod
     def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
@@ -188,14 +160,7 @@ class ScanRepository:
             val = out.get(key)
             if isinstance(val, datetime):
                 out[key] = val.isoformat()
-        # GridFS ObjectIds are not JSON serialisable; expose as strings.
         if out.get("bundle_file_id") is not None:
             out["bundle_file_id"] = str(out["bundle_file_id"])
-        photos = out.get("photos")
-        if isinstance(photos, dict):
-            out["photos"] = {
-                view: {**meta, "file_id": str(meta["file_id"])}
-                for view, meta in photos.items()
-                if isinstance(meta, dict) and meta.get("file_id") is not None
-            }
+        out["photos"] = serialize_photos(out.get("photos"))
         return out

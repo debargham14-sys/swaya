@@ -37,6 +37,12 @@ class _CameraScreenState extends State<CameraScreen> {
       if (picked == null || !mounted) return;
       final bytes = await picked.readAsBytes();
       if (!mounted) return;
+      if (bytes.length < 8000) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Photo looks too small — try again with better lighting')),
+        );
+        return;
+      }
       final name = picked.name.isNotEmpty ? picked.name : '${widget.view.name}.jpg';
       context.read<CaptureSession>().setPhoto(
             widget.view,

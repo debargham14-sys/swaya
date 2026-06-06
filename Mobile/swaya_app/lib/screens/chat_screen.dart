@@ -25,11 +25,23 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _loadWelcome();
+  }
+
+  Future<void> _loadWelcome() async {
     final result = context.read<CaptureSession>().lastResult;
-    if (result != null) {
-      _messages.add(
-        ChatMessage(role: ChatRole.assistant, text: _chat.welcomeMessage(result)),
-      );
+    if (result == null) return;
+    setState(() => _loading = true);
+    try {
+      final text = await _chat.welcomeMessage(result);
+      if (!mounted) return;
+      setState(() {
+        _messages.add(ChatMessage(role: ChatRole.assistant, text: text));
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
     }
   }
 
@@ -91,6 +103,25 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final result = context.watch<CaptureSession>().lastResult;
+
+    if (result == null) {
+      return Scaffold(
+        backgroundColor: SwayaColors.base,
+        appBar: AppBar(title: const Text('Fit assistant')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'Complete a body scan first — then ask about blouse, kurta, or lehenga sizing.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: SwayaColors.inkSecondary,
+                  ),
+            ),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: SwayaColors.base,

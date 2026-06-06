@@ -91,18 +91,15 @@ class ScanService:
             metadata=metadata or None,
         )
         doc["download_url"] = f"/v1/scans/{scan_id}/bundle"
-        doc["photo_urls"] = {
-            view: f"/v1/scans/{scan_id}/photos/{view}" for view in ("front", "back", "side")
-        }
+        doc["photo_urls"] = self._photo_urls(scan_id, doc)
         return doc
 
     def get_scan(self, scan_id: str) -> dict[str, Any] | None:
         doc = self._repo.get_scan(scan_id)
         if doc:
-            doc["download_url"] = f"/v1/scans/{scan_id}/bundle"
-            doc["photo_urls"] = {
-                view: f"/v1/scans/{scan_id}/photos/{view}" for view in ("front", "back", "side")
-            }
+            sid = doc.get("scan_id") or scan_id
+            doc["download_url"] = f"/v1/scans/{sid}/bundle"
+            doc["photo_urls"] = self._photo_urls(sid, doc)
         return doc
 
     def list_scans(self, limit: int = 30) -> list[dict[str, Any]]:
@@ -111,9 +108,7 @@ class ScanService:
             sid = doc.get("scan_id")
             if sid:
                 doc["download_url"] = f"/v1/scans/{sid}/bundle"
-                doc["photo_urls"] = {
-                    view: f"/v1/scans/{sid}/photos/{view}" for view in ("front", "back", "side")
-                }
+                doc["photo_urls"] = self._photo_urls(sid, doc)
         return items
 
     def open_bundle(self, scan_id: str):
@@ -126,12 +121,27 @@ class ScanService:
         doc = self._repo.update_ground_truth(scan_id, ground_truth_cm)
         if not doc:
             return None
+        was_calibrated = bool((doc.get("measurements") or {}).get("calibration_profile"))
         doc = refresh_scan_after_ground_truth(scan_id) or doc
+        now_calibrated = bool((doc.get("measurements") or {}).get("calibration_profile"))
+        doc["calibration_updated"] = now_calibrated and (
+            not was_calibrated or bool(doc.get("ground_truth_comparison"))
+        )
         doc["download_url"] = f"/v1/scans/{scan_id}/bundle"
-        doc["photo_urls"] = {
-            view: f"/v1/scans/{scan_id}/photos/{view}" for view in ("front", "back", "side")
-        }
+        doc["photo_urls"] = self._photo_urls(scan_id, doc)
         return doc
+
+    @staticmethod
+    def _photo_urls(scan_id: str, doc: dict[str, Any]) -> dict[str, str]:
+        urls: dict[str, str] = {}
+        photos = doc.get("photos") or {}
+        for view in ("front", "back", "side"):
+            meta = photos.get(view) if isinstance(photos, dict) else None
+            if isinstance(meta, dict) and meta.get("s3_url"):
+                urls[view] = meta["s3_url"]
+            else:
+                urls[view] = f"/v1/scans/{scan_id}/photos/{view}"
+        return urls
 
 
 def process_uploaded_scan(

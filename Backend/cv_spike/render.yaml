@@ -1,5 +1,9 @@
 # Render Blueprint — https://render.com/docs/blueprint-spec
-# After deploy, set MONGODB_URI in the Render dashboard (Atlas connection string).
+# After deploy, set in the Render dashboard:
+#   MONGODB_URI          — Atlas connection string
+#   AWS_ACCESS_KEY_ID    — IAM user with s3:PutObject / s3:GetObject on the bucket
+#   AWS_SECRET_ACCESS_KEY
+#   S3_BUCKET            — e.g. swaya-dsv-photos
 services:
   - type: web
     name: swaya-dsv-api
@@ -15,6 +19,19 @@ services:
         value: dsv
       - key: SCAN_STORAGE_BACKEND
         value: gridfs
+      # Raw JPGs → S3; MongoDB stores s3_key + s3_url per photo. Bundles stay in GridFS.
+      - key: PHOTO_STORAGE
+        value: s3
+      - key: AWS_REGION
+        value: us-east-1
+      - key: S3_PHOTO_PREFIX
+        value: dsv/scans
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false
       - key: BUNDLE_TRY_MESH
         value: "0"
       - key: PYTHONUNBUFFERED

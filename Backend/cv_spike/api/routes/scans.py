@@ -18,6 +18,7 @@ from api.db.mongo import mongo_available, mongo_last_error
 from api.forms import MeasureMode, PreferKind, RefKind, resolve_measure_request, save_upload
 from api.image_prep import prepare_scan_paths
 from api.services.scan_service import ScanService, process_uploaded_scan
+from api.storage.photo_store import PhotoStorageError
 from pipeline.measure import smpl_backend
 
 router = APIRouter(prefix="/v1/scans", tags=["scans"])
@@ -167,6 +168,8 @@ async def create_scan(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except PhotoStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except smpl_backend.BackendUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001

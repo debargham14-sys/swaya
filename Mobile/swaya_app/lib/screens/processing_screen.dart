@@ -18,6 +18,7 @@ class ProcessingScreen extends StatefulWidget {
 
 class _ProcessingScreenState extends State<ProcessingScreen> {
   int _step = 0;
+  bool _started = false;
   static const _labels = [
     'Front photo',
     'Back photo',
@@ -32,7 +33,31 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
   }
 
   Future<void> _run() async {
+    if (_started) return;
+    _started = true;
+
     final session = context.read<CaptureSession>();
+    if (session.isMeasuring) return;
+
+    if (session.heightCm == null || session.heightCm! <= 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Height missing — go back and enter height')),
+        );
+        context.go('/scan/height');
+      }
+      return;
+    }
+    if (!session.hasAllPhotos) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('All three photos are required')),
+        );
+        context.go('/scan/review');
+      }
+      return;
+    }
+
     final api = ScanApi();
     final photos = session.photos;
 

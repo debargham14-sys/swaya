@@ -36,7 +36,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from api.db.mongo import mongo_available, mongo_last_error  # noqa: E402
-from api.settings import SCAN_STORAGE_BACKEND  # noqa: E402
+from api.settings import PHOTO_STORAGE, SCAN_STORAGE_BACKEND  # noqa: E402
+from api.storage.photo_store import photo_storage_status  # noqa: E402
+from api.routes.assistant import router as assistant_router  # noqa: E402
 from api.forms import (  # noqa: E402
     MeasureMode,
     PreferKind,
@@ -69,6 +71,7 @@ app.add_middleware(
 )
 app.include_router(scans_router)
 app.include_router(calibration_router)
+app.include_router(assistant_router)
 
 if _ENABLE_QC:
     from api.routes.qc import router as qc_router  # noqa: E402
@@ -86,6 +89,7 @@ def health() -> dict:
         "mongodb": mongo_available(),
         "mongodb_error": mongo_last_error() if not mongo_available() else None,
         "scan_storage": SCAN_STORAGE_BACKEND,
+        "photo_storage": photo_storage_status(),
         "qc_enabled": _ENABLE_QC,
         "pose_model": pose_model_status(),
     }

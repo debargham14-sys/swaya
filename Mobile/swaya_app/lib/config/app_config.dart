@@ -9,4 +9,6 @@ class AppConfig {
   static const String measureHeightPath = '/v1/measure/height';
   static const String scansPath = '/v1/scans';
   static const String healthPath = '/health';
+  static const String assistantSuggestPath = '/v1/assistant/suggest';
+  static const String assistantChatPath = '/v1/assistant/chat';
 }

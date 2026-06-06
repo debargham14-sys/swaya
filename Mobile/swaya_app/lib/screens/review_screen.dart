@@ -11,6 +11,19 @@ import '../widgets/swaya_scaffold.dart';
 class ReviewScreen extends StatelessWidget {
   const ReviewScreen({super.key});
 
+  static String _submitBlockReason(CaptureSession session) {
+    if (session.heightCm == null || session.heightCm! <= 0) {
+      return 'Height is required — go back to the first step.';
+    }
+    if (!session.hasAllPhotos) {
+      return 'Capture front, back, and side photos before continuing.';
+    }
+    if (!session.consentGiven) {
+      return 'Consent is required — return to the height step.';
+    }
+    return 'Complete all fields before submitting.';
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = context.watch<CaptureSession>();
@@ -72,6 +85,15 @@ class ReviewScreen extends StatelessWidget {
               );
             }).toList(),
           ),
+          if (!session.canSubmit) ...[
+            const SizedBox(height: 12),
+            Text(
+              _submitBlockReason(session),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: SwayaColors.warning,
+                  ),
+            ),
+          ],
           const Spacer(),
           Row(
             children: [
@@ -85,10 +107,10 @@ class ReviewScreen extends StatelessWidget {
               Expanded(
                 flex: 2,
                 child: ElevatedButton(
-                  onPressed: session.canSubmit
+                  onPressed: session.canSubmit && !session.isMeasuring
                       ? () => context.go('/scan/processing')
                       : null,
-                  child: const Text('Get measurements'),
+                  child: Text(session.isMeasuring ? 'Processing…' : 'Get measurements'),
                 ),
               ),
             ],

@@ -12,6 +12,8 @@ class ScanRecord {
     this.subjectLabel,
     this.groundTruthCm = const {},
     this.groundTruthComparison = const {},
+    this.calibrationUpdated = false,
+    this.photoUrls = const {},
   });
 
   factory ScanRecord.fromJson(Map<String, dynamic> json) {
@@ -40,6 +42,14 @@ class ScanRecord {
 
     final subjectLabel = json['subject_label'] as String?;
 
+    final photoUrlsRaw = json['photo_urls'];
+    final photoUrls = <String, String>{};
+    if (photoUrlsRaw is Map) {
+      photoUrlsRaw.forEach((k, v) {
+        if (v is String) photoUrls[k.toString()] = v;
+      });
+    }
+
     return ScanRecord(
       scanId: json['scan_id'] as String? ?? '',
       result: MeasurementResult.fromJson(measureMap),
@@ -49,6 +59,8 @@ class ScanRecord {
       subjectLabel: subjectLabel,
       groundTruthCm: groundTruthCm,
       groundTruthComparison: comparison,
+      calibrationUpdated: json['calibration_updated'] as bool? ?? false,
+      photoUrls: photoUrls,
     );
   }
 
@@ -62,6 +74,8 @@ class ScanRecord {
   String get displayName => scanDisplayName(subjectLabel: subjectLabel, scanId: scanId);
   final Map<String, double> groundTruthCm;
   final Map<String, GroundTruthComparison> groundTruthComparison;
+  final bool calibrationUpdated;
+  final Map<String, String> photoUrls;
 
   String bundleAbsoluteUrl(String apiBase) {
     final base = apiBase.replaceAll(RegExp(r'/+$'), '');

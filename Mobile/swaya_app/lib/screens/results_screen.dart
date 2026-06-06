@@ -9,6 +9,7 @@ import '../services/scan_api.dart';
 import '../theme/swaya_theme.dart';
 import '../utils/bundle_launcher.dart';
 import '../utils/scan_display.dart';
+import '../utils/fit_suggestion_flow.dart';
 import '../widgets/ground_truth_form.dart';
 import '../widgets/measurement_row.dart';
 import '../widgets/swaya_scaffold.dart';
@@ -49,9 +50,12 @@ class _ResultsScreenState extends State<ResultsScreen> {
     );
   }
 
+  static const _maxGirthCm = 250.0;
+
   double? _parse(TextEditingController c) {
     final v = double.tryParse(c.text.trim());
     if (v == null || v <= 0) return null;
+    if (v > _maxGirthCm) return null;
     return v;
   }
 
@@ -61,8 +65,16 @@ class _ResultsScreenState extends State<ResultsScreen> {
     final waist = _parse(_waistCtrl);
     final hip = _parse(_hipCtrl);
     if (bust == null && underbust == null && waist == null && hip == null) {
+      final anyEntered = [_bustCtrl, _underbustCtrl, _waistCtrl, _hipCtrl]
+          .any((c) => c.text.trim().isNotEmpty);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter at least one tape measurement (cm)')),
+        SnackBar(
+          content: Text(
+            anyEntered
+                ? 'Each tape value must be between 1 and $_maxGirthCm cm'
+                : 'Enter at least one tape measurement (cm)',
+          ),
+        ),
       );
       return;
     }
@@ -87,6 +99,12 @@ class _ResultsScreenState extends State<ResultsScreen> {
           ),
         ),
       );
+      if (updated.calibrationUpdated && updated.result.hasGirths) {
+        await showFitSuggestionsAfterCalibration(
+          context,
+          measurements: updated.result,
+        );
+      }
     } on MeasureApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));

@@ -83,7 +83,21 @@ GoRouter createAppRouter() {
       GoRoute(
         path: '/scan/capture/:view',
         builder: (context, state) {
-          final view = CaptureView.values.byName(state.pathParameters['view']!);
+          final name = state.pathParameters['view'];
+          CaptureView? view;
+          if (name != null) {
+            for (final v in CaptureView.values) {
+              if (v.name == name) {
+                view = v;
+                break;
+              }
+            }
+          }
+          if (view == null) {
+            return const Scaffold(
+              body: Center(child: Text('Invalid capture step')),
+            );
+          }
           return CameraScreen(view: view);
         },
       ),

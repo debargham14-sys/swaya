@@ -206,6 +206,7 @@ def _run_pose_landmarker(img: np.ndarray):
 
     from pipeline.measure.pose_worker import run_on_bgr
 
+    # Subprocess isolates MediaPipe GL on macOS; Linux uses in-process CPU delegate.
     use_subprocess = platform.system() == "Darwin"
 
     def _call(bgr: np.ndarray, scale: float) -> tuple[dict | None, str | None]:

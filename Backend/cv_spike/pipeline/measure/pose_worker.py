@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import platform
 import sys
 import threading
 from pathlib import Path
@@ -86,7 +87,11 @@ def _detect(bgr: np.ndarray) -> dict:
         if _landmarker is None:
             if _POSE_MODEL is None:
                 _POSE_MODEL = resolve_pose_model_path()
-            base = mptp.BaseOptions(model_asset_path=str(_POSE_MODEL))
+            base_kw: dict = {"model_asset_path": str(_POSE_MODEL)}
+            # Headless Linux (Render Docker) has no libGLESv2 — force CPU inference.
+            if platform.system() == "Linux":
+                base_kw["delegate"] = mptp.BaseOptions.Delegate.CPU
+            base = mptp.BaseOptions(**base_kw)
             opts = vision.PoseLandmarkerOptions(
                 base_options=base,
                 running_mode=vision.RunningMode.IMAGE,

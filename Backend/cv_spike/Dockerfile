@@ -3,7 +3,9 @@ FROM python:3.11-slim-bookworm
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libglib2.0-0 libsm6 libxext6 libxrender1 libgl1-mesa-glx curl \
+    libglib2.0-0 libsm6 libxext6 libxrender1 \
+    libgl1-mesa-glx libgl1-mesa-dri libgles2-mesa libegl1-mesa libgbm1 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Full model: more accurate landmarks/segmentation than lite (accuracy > a few seconds here).

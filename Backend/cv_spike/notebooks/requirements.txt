@@ -1,0 +1,4 @@
+jupyter>=1.0.0
+ipywidgets>=8.0.0
+matplotlib>=3.7.0
+# notebook also uses Backend/cv_spike/requirements.txt (opencv, mediapipe, …)

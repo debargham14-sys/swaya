@@ -1,0 +1,7 @@
+# Minimal deps for dsv_measurement_probe.ipynb (no torch / API server)
+opencv-contrib-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+mediapipe>=0.10
+matplotlib>=3.7.0
+ipywidgets>=8.0.0

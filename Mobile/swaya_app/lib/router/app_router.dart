@@ -15,7 +15,10 @@ import '../screens/processing_screen.dart';
 import '../screens/profile_screen.dart';
 import '../screens/results_screen.dart';
 import '../screens/review_screen.dart';
+import '../screens/vest_result_screen.dart';
+import '../screens/vest_scan_screen.dart';
 import '../screens/welcome_screen.dart';
+import '../models/vest_measurement.dart';
 import '../widgets/app_shell.dart';
 
 final rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -116,6 +119,20 @@ GoRouter createAppRouter() {
       GoRoute(
         path: '/scan/assistant',
         builder: (context, state) => const ChatScreen(),
+      ),
+      GoRoute(
+        path: '/vest',
+        builder: (context, state) => const VestScanScreen(),
+      ),
+      GoRoute(
+        path: '/vest/result',
+        builder: (context, state) {
+          final extra = state.extra;
+          if (extra is VestScanResult) {
+            return VestResultScreen(result: extra);
+          }
+          return const Scaffold(body: Center(child: Text('No vest result')));
+        },
       ),
       GoRoute(
         path: '/history/scan/:scanId',

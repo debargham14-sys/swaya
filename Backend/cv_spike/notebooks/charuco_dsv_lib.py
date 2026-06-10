@@ -956,6 +956,292 @@ def detect_stencil_measurement_lines(
     return out
 
 
+# HSV ranges for coloured measuring tapes (same as detect_stencil_measurement_lines).
+_TAPE_HSV: dict[str, tuple[np.ndarray, np.ndarray]] = {
+    "pink": (np.array([145, 40, 80], np.uint8), np.array([175, 255, 255], np.uint8)),
+    "purple": (np.array([125, 30, 60], np.uint8), np.array([155, 255, 255], np.uint8)),
+    "teal": (np.array([78, 35, 80], np.uint8), np.array([105, 255, 255], np.uint8)),
+}
+_LEVEL_TAPE_COLOR: dict[str, str] = {
+    "bust": "pink",
+    "underbust": "pink",
+    "waist": "purple",
+    "hip": "teal",
+    "hip2": "teal",
+}
+
+
+@dataclass
+class BandWidthResult:
+    """Width read at a coloured measuring band (inch ticks + silhouette edges)."""
+
+    level: str
+    y_px: int
+    left_x: int
+    right_x: int
+    width_cm: float
+    width_in: float
+    px_per_eighth_in: float | None = None
+    scale_source: str = "tape_ticks"
+    edge_source: str = "body_mask"
+    warnings: list[str] = field(default_factory=list)
+
+
+def _tape_hsv_for_level(level: str) -> tuple[np.ndarray, np.ndarray]:
+    color = _LEVEL_TAPE_COLOR.get(level, "pink")
+    return _TAPE_HSV[color]
+
+
+def _tape_row_mask(
+    bgr: np.ndarray,
+    y: int,
+    hsv_lo: np.ndarray,
+    hsv_hi: np.ndarray,
+    tape_half_h: int = 14,
+) -> np.ndarray:
+    h = bgr.shape[0]
+    y = int(np.clip(y, 0, h - 1))
+    y0, y1 = max(0, y - tape_half_h), min(h, y + tape_half_h)
+    hsv = cv2.cvtColor(bgr[y0:y1], cv2.COLOR_BGR2HSV)
+    return (cv2.inRange(hsv, hsv_lo, hsv_hi) > 0).any(axis=0)
+
+
+def detect_tape_px_per_eighth_in(
+    bgr: np.ndarray,
+    y: int,
+    level: str,
+    tape_half_h: int = 14,
+) -> tuple[float | None, tuple[int, int] | None]:
+    """
+    Median pixel spacing between 1/8-inch tick marks on a horizontal measuring band.
+
+    Returns ``(px_per_eighth_in, (x0, x1))`` for the widest visible tape run.
+    """
+    lo, hi = _tape_hsv_for_level(level)
+    col = _tape_row_mask(bgr, y, lo, hi, tape_half_h=tape_half_h)
+    xs = np.where(col)[0]
+    if len(xs) < 24:
+        return None, None
+
+    splits = np.where(np.diff(xs) > 12)[0]
+    groups = np.split(xs, splits + 1)
+    segs = [g for g in groups if len(g) >= 16]
+    if not segs:
+        return None, None
+    best = max(segs, key=len)
+    x0, x1 = int(best[0]), int(best[-1])
+
+    h = bgr.shape[0]
+    y0, y1 = max(0, y - tape_half_h), min(h, y + tape_half_h)
+    gray = cv2.cvtColor(bgr[y0:y1, x0 : x1 + 1], cv2.COLOR_BGR2GRAY)
+    gx = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)).mean(axis=0).flatten()
+    if gx.size < 8:
+        return None, (x0, x1)
+
+    thr = float(gx.mean() + 0.35 * gx.std())
+    peaks: list[int] = []
+    for i in range(2, len(gx) - 2):
+        if gx[i] > thr and gx[i] >= gx[i - 1] and gx[i] >= gx[i + 1]:
+            peaks.append(i + x0)
+    if len(peaks) < 4:
+        return None, (x0, x1)
+
+    diffs = np.diff(peaks)
+    diffs = diffs[(diffs > 1.5) & (diffs < 40.0)]
+    if len(diffs) < 2:
+        return None, (x0, x1)
+    return float(np.median(diffs)), (x0, x1)
+
+
+def _row_torso_edges(
+    row: np.ndarray,
+    margin_frac: float = 0.05,
+    min_run_frac: float = 0.08,
+) -> tuple[int, int] | None:
+    """Left/right edges of the largest foreground run on a mask row."""
+    w = row.shape[0]
+    x_margin = int(w * margin_frac)
+    seg = row[x_margin : w - x_margin]
+    xs = np.where(seg > 128)[0]
+    if len(xs) < 2:
+        return None
+    splits = np.where(np.diff(xs) > 3)[0]
+    groups = np.split(xs, splits + 1)
+    best = max(groups, key=len)
+    if len(best) < max(8, int(w * min_run_frac)):
+        return None
+    return int(best[0] + x_margin), int(best[-1] + x_margin)
+
+
+def _tape_wing_inner_edges(
+    col: np.ndarray,
+    min_seg_px: int = 8,
+    min_gap_px: int = 30,
+) -> tuple[int, int] | None:
+    """Inner edges of left/right tape wings where the torso occludes the band."""
+    w = col.shape[0]
+    mid = w // 2
+    left_x: int | None = None
+    right_x: int | None = None
+
+    for half, off, pick in (
+        (col[:mid], 0, "right"),
+        (col[mid:], mid, "left"),
+    ):
+        xs = np.where(half)[0]
+        if len(xs) < min_seg_px:
+            continue
+        splits = np.where(np.diff(xs) > 10)[0]
+        groups = np.split(xs, splits + 1)
+        segs = [g for g in groups if len(g) >= min_seg_px]
+        if not segs:
+            continue
+        if pick == "right":
+            left_x = off + int(segs[-1][-1])
+        else:
+            right_x = off + int(segs[0][0])
+
+    if left_x is None or right_x is None or (right_x - left_x) < min_gap_px:
+        return None
+    return left_x, right_x
+
+
+def _tape_gap_inner_edges(col: np.ndarray, min_seg_px: int = 12, min_gap_px: int = 30) -> tuple[int, int] | None:
+    """Gap between two tape segments when both shoulder wings are visible."""
+    xs = np.where(col)[0]
+    if len(xs) < min_seg_px * 2:
+        return None
+    splits = np.where(np.diff(xs) > 15)[0]
+    groups = np.split(xs, splits + 1)
+    segs = [(int(g[0]), int(g[-1])) for g in groups if len(g) >= min_seg_px]
+    if len(segs) < 2:
+        return None
+    best_gap = 0
+    best_pair: tuple[int, int] | None = None
+    for i in range(len(segs) - 1):
+        gap = segs[i + 1][0] - segs[i][1]
+        if gap > best_gap:
+            best_gap = gap
+            best_pair = (segs[i][1], segs[i + 1][0])
+    if best_pair is None or best_gap < min_gap_px:
+        return None
+    return best_pair
+
+
+def measure_band_width_at_row(
+    bgr: np.ndarray,
+    y: int,
+    level: str,
+    body_mask: np.ndarray | None = None,
+    mm_per_px: float | None = None,
+    calibration: CalibrationResult | None = None,
+    tape_half_h: int = 14,
+) -> BandWidthResult | None:
+    """
+    Measure torso width at a coloured measuring band.
+
+    Uses inch-tick spacing on the band for scale when ticks decode; edges come
+    from the body mask row, falling back to tape-occlusion wings on the band.
+    """
+    h, w = bgr.shape[:2]
+    y = int(np.clip(y, 0, h - 1))
+    lo, hi = _tape_hsv_for_level(level)
+    col = _tape_row_mask(bgr, y, lo, hi, tape_half_h=tape_half_h)
+    px_eighth, _tape_span = detect_tape_px_per_eighth_in(bgr, y, level, tape_half_h=tape_half_h)
+
+    edge_source = "body_mask"
+    edges: tuple[int, int] | None = None
+    if body_mask is not None and body_mask.shape[:2] == (h, w):
+        edges = _row_torso_edges(body_mask[y])
+    if edges is None:
+        edges = _tape_gap_inner_edges(col)
+        if edges:
+            edge_source = "tape_gap"
+    if edges is None:
+        edges = _tape_wing_inner_edges(col)
+        if edges:
+            edge_source = "tape_wings"
+    if edges is None:
+        return None
+
+    xl, xr = edges
+    width_px = xr - xl
+    if width_px < 8:
+        return None
+
+    warnings: list[str] = []
+    scale_source = "tape_ticks"
+    width_cm: float | None = None
+    width_in: float | None = None
+
+    if calibration is not None and calibration.H_px_to_mm is not None:
+        pts = calibration.px_to_mm(
+            np.array([[xl, y], [xr, y]], dtype=np.float64)
+        )
+        width_cm = round(abs(float(pts[1, 0] - pts[0, 0])) / 10.0, 2)
+        width_in = round(width_cm / 2.54, 2)
+        scale_source = "charuco_homography"
+    elif mm_per_px and mm_per_px > 0:
+        width_cm = round(width_px * mm_per_px / 10.0, 2)
+        width_in = round(width_cm / 2.54, 2)
+        scale_source = "charuco_mm_per_px"
+    elif px_eighth and px_eighth > 0:
+        width_in = round(width_px / (8.0 * px_eighth), 2)
+        width_cm = round(width_in * 2.54, 2)
+        scale_source = "tape_ticks"
+    else:
+        return None
+
+    if px_eighth and px_eighth > 0 and scale_source != "tape_ticks":
+        tick_in = width_px / (8.0 * px_eighth)
+        if abs(tick_in - width_in) > max(1.5, 0.15 * width_in):
+            warnings.append(
+                f"tape_scale_mismatch:tick={tick_in:.1f}in vs {scale_source}={width_in:.1f}in"
+            )
+
+    return BandWidthResult(
+        level=level,
+        y_px=y,
+        left_x=xl,
+        right_x=xr,
+        width_cm=width_cm,
+        width_in=width_in,
+        px_per_eighth_in=px_eighth,
+        scale_source=scale_source,
+        edge_source=edge_source,
+        warnings=warnings,
+    )
+
+
+def measure_front_widths_from_bands(
+    bgr: np.ndarray,
+    band_rows: dict[str, int] | None = None,
+    body_mask: np.ndarray | None = None,
+    mm_per_px: float | None = None,
+    calibration: CalibrationResult | None = None,
+    min_span_frac: float = 0.08,
+) -> dict[str, BandWidthResult]:
+    """
+    Extract front-panel widths at all detected coloured measuring bands.
+
+    ``band_rows`` defaults to ``detect_stencil_measurement_lines`` on ``bgr``.
+    """
+    rows = band_rows or detect_stencil_measurement_lines(bgr, min_span_frac=min_span_frac)
+    out: dict[str, BandWidthResult] = {}
+    for level, y in rows.items():
+        hit = measure_band_width_at_row(
+            bgr,
+            y,
+            level,
+            body_mask=body_mask,
+            mm_per_px=mm_per_px,
+            calibration=calibration,
+        )
+        if hit:
+            out[level] = hit
+    return out
+
+
 def _rows_to_mm(
     rows: dict[str, int],
     px_per_mm: float,
@@ -1091,14 +1377,376 @@ def calibrate_stencil_charuco_roi(
         warnings.append(f"{slot.name}:homography_failed")
         return CalibrationResult(None, None, n, ids_list, "none", warnings)
 
-    ratios = []
-    for i in range(len(img_pts) - 1):
-        d_px = float(np.linalg.norm(img_pts[i] - img_pts[i + 1]))
-        d_mm = float(np.linalg.norm(obj_mm[i] - obj_mm[i + 1]))
-        if d_px > 2 and d_mm > 1:
-            ratios.append(d_mm / d_px)
-    mm_per_px = float(np.median(ratios)) if ratios else None
+    cx_roi = float(np.mean(img_pts[:, 0]))
+    cy_roi = float(np.mean(img_pts[:, 1]))
+    mm_per_px = _mm_per_px_from_homography(H, cx_roi, cy_roi)
     return CalibrationResult(mm_per_px, H, n, ids_list, f"{slot.name}_charuco", warnings)
+
+
+def _mm_per_px_from_homography(H: np.ndarray, cx: float, cy: float) -> float:
+    """Local mm/px from a px→mm homography (mean of x- and y-axis unit steps)."""
+    pts = np.array([[cx, cy], [cx + 1.0, cy], [cx, cy + 1.0]], dtype=np.float64)
+    hom = np.hstack([pts, np.ones((3, 1), dtype=np.float64)])
+    mm = (H @ hom.T).T
+    mm_xy = mm[:, :2] / mm[:, 2:3]
+    scale_x = float(np.linalg.norm(mm_xy[1] - mm_xy[0]))
+    scale_y = float(np.linalg.norm(mm_xy[2] - mm_xy[0]))
+    return (scale_x + scale_y) / 2.0
+
+
+@dataclass
+class CharucoRectifySpec:
+    """Settings for perspective-flattening a tilted / curved DSV photo region."""
+
+    px_per_mm: float = 3.0  # output canvas resolution
+    margin_mm: float = 50.0  # pad around the detected board in the output
+    upscale_for_detect: float = 3.0  # detect on upscaled image, warp original
+    detect_pad_mm: float = 85.0
+    fill_bgr: tuple[int, int, int] = (245, 245, 240)
+    preprocess_clahe: bool = False
+
+
+@dataclass
+class RectifiedView:
+    """A perspective-corrected crop where the ChArUco board is axis-aligned."""
+
+    image_bgr: np.ndarray
+    calibration: CalibrationResult
+    slot_name: str
+    slot_center_px: tuple[float, float]
+    board_mm: tuple[float, float]
+    mm_per_px_out: float
+    H_img_to_mm: np.ndarray
+    warnings: list[str] = field(default_factory=list)
+
+
+def preprocess_for_charuco_detect(
+    img_bgr: np.ndarray,
+    upscale: float = 1.0,
+    clahe: bool = True,
+) -> np.ndarray:
+    """
+    Mild denoise + contrast boost before ChArUco detection.
+
+    Does not modify geometry — safe to use only for finding corners, then map
+    homography back to the original-resolution image for rectification.
+    """
+    out = img_bgr
+    if upscale > 1.0:
+        out = cv2.resize(out, None, fx=upscale, fy=upscale, interpolation=cv2.INTER_LANCZOS4)
+    if clahe:
+        lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        l = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
+        out = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+    return cv2.bilateralFilter(out, d=5, sigmaColor=40, sigmaSpace=40)
+
+
+def find_charuco_slot_in_image(
+    img_bgr: np.ndarray,
+    slot: CharucoSlotSpec,
+    px_per_mm_hint: float | None = None,
+    spec: CharucoRectifySpec | None = None,
+    center_fracs: list[tuple[float, float]] | None = None,
+) -> tuple[CalibrationResult, tuple[float, float], float]:
+    """
+    Auto-locate one ChArUco board and return calibration on the **native** image.
+
+    Returns ``(calibration, center_px_native, detect_upscale)``.
+    """
+    spec = spec or CharucoRectifySpec()
+    h, w = img_bgr.shape[:2]
+    ppm_hint = px_per_mm_hint or (h / 900.0)
+
+    if center_fracs is None:
+        center_fracs = []
+        defaults = {
+            "F0": [(0.52, 0.30), (0.50, 0.28)],
+            "F1": [(0.50, 0.58), (0.50, 0.55)],
+            "F2": [(0.35, 0.30), (0.38, 0.28)],
+            "F3": [(0.65, 0.30), (0.62, 0.28)],
+        }
+        center_fracs.extend(defaults.get(slot.name, []))
+        for cy in np.linspace(0.12, 0.72, 14):
+            for cx in (0.5, 0.45, 0.55, 0.35, 0.65, 0.4, 0.6):
+                center_fracs.append((float(cx), float(cy)))
+
+    detect_scales = [3.0, 4.0, 2.0, 1.0]
+    if spec.upscale_for_detect not in detect_scales:
+        detect_scales.insert(0, max(1.0, spec.upscale_for_detect))
+
+    best_n = 0
+    best_cal: CalibrationResult | None = None
+    best_center = (w * 0.5, h * 0.4)
+    best_detect_scale = 1.0
+
+    for detect_scale in detect_scales:
+        for use_preprocess in (False, spec.preprocess_clahe):
+            if use_preprocess and not spec.preprocess_clahe:
+                continue
+            detect_img = (
+                preprocess_for_charuco_detect(img_bgr, detect_scale, True)
+                if use_preprocess
+                else (
+                    cv2.resize(img_bgr, None, fx=detect_scale, fy=detect_scale, interpolation=cv2.INTER_LANCZOS4)
+                    if detect_scale > 1.0
+                    else img_bgr
+                )
+            )
+            dh, dw = detect_img.shape[:2]
+            ppm_detect = ppm_hint * detect_scale
+
+            for cx_frac, cy_frac in center_fracs:
+                slot_probe = CharucoSlotSpec(
+                    name=slot.name,
+                    cols=slot.cols,
+                    rows=slot.rows,
+                    square_mm=slot.square_mm,
+                    marker_mm=slot.marker_mm,
+                    dict_name=slot.dict_name,
+                    legacy_aruco_id=slot.legacy_aruco_id,
+                    center_px=(dw * cx_frac, dh * cy_frac),
+                )
+                cal = calibrate_stencil_charuco_roi(
+                    detect_img, slot_probe, ppm_detect, roi_pad_mm=spec.detect_pad_mm
+                )
+                if cal.charuco_corners > best_n:
+                    best_n = cal.charuco_corners
+                    best_cal = cal
+                    best_center = (w * cx_frac, h * cy_frac)
+                    best_detect_scale = detect_scale
+
+    if best_cal is None or best_n < 4 or best_cal.H_px_to_mm is None:
+        return (
+            CalibrationResult(None, None, best_n, [], "none", ["charuco_not_found"]),
+            best_center,
+            best_detect_scale,
+        )
+
+    # Map homography from detect-scale pixels → native image pixels.
+    S_detect_to_native = np.array(
+        [[1.0 / best_detect_scale, 0, 0], [0, 1.0 / best_detect_scale, 0], [0, 0, 1]],
+        dtype=np.float64,
+    )
+    # p_detect = detect_scale * p_native  →  H_native = H_detect @ diag(scale, scale, 1)
+    S_native_to_detect = np.array(
+        [[best_detect_scale, 0, 0], [0, best_detect_scale, 0], [0, 0, 1]],
+        dtype=np.float64,
+    )
+    H_native = best_cal.H_px_to_mm @ S_native_to_detect
+    mm_per_px_native = _mm_per_px_from_homography(H_native, best_center[0], best_center[1])
+    cal_native = CalibrationResult(
+        mm_per_px_native,
+        H_native,
+        best_n,
+        best_cal.aruco_ids,
+        best_cal.method,
+        list(best_cal.warnings),
+    )
+    return cal_native, best_center, best_detect_scale
+
+
+def _board_extent_mm(slot: CharucoSlotSpec, margin_mm: float) -> tuple[float, float, float, float]:
+    """Return (x0, y0, x1, y1) panel-mm bounds for the board + margin."""
+    board_w = slot.cols * slot.square_mm
+    board_h = slot.rows * slot.square_mm
+    cx = slot.center_x_mm or 0.0
+    cy = slot.center_y_mm or 0.0
+    return (
+        cx - board_w / 2.0 - margin_mm,
+        cy - board_h / 2.0 - margin_mm,
+        cx + board_w / 2.0 + margin_mm,
+        cy + board_h / 2.0 + margin_mm,
+    )
+
+
+def rectify_image_by_charuco(
+    img_bgr: np.ndarray,
+    calibration: CalibrationResult,
+    slot: CharucoSlotSpec,
+    spec: CharucoRectifySpec | None = None,
+    panel_mm_bounds: tuple[float, float, float, float] | None = None,
+) -> RectifiedView:
+    """
+    Perspective-flatten a tilted photo using a ChArUco homography.
+
+    The output image is a fronto-parallel view: the board appears square and
+    axis-aligned, and distances in the output are proportional to real mm
+    (``mm_per_px_out = 1 / spec.px_per_mm``).
+
+    Use this to undo camera tilt and mild fabric skew around a detected marker
+    before width / band measurements.
+    """
+    spec = spec or CharucoRectifySpec()
+    warnings: list[str] = []
+    H = calibration.H_px_to_mm
+    if H is None or calibration.charuco_corners < 4:
+        raise ValueError("calibration has no usable homography (need >=4 ChArUco corners)")
+
+    if panel_mm_bounds is None:
+        x0, y0, x1, y1 = _board_extent_mm(slot, spec.margin_mm)
+    else:
+        x0, y0, x1, y1 = panel_mm_bounds
+
+    ppm = spec.px_per_mm
+    out_w = max(8, _mm_to_px(x1 - x0, ppm))
+    out_h = max(8, _mm_to_px(y1 - y0, ppm))
+
+    # img_px -> mm via H, then mm -> out_px with origin at (x0, y0).
+    T = np.array(
+        [[ppm, 0, -x0 * ppm], [0, ppm, -y0 * ppm], [0, 0, 1]],
+        dtype=np.float64,
+    )
+    M_img_to_out = T @ H
+    M_out_to_img = np.linalg.inv(M_img_to_out)
+
+    rectified = cv2.warpPerspective(
+        img_bgr,
+        M_out_to_img,
+        (out_w, out_h),
+        flags=cv2.INTER_LANCZOS4,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=spec.fill_bgr,
+    )
+
+    board_w = slot.cols * slot.square_mm
+    board_h = slot.rows * slot.square_mm
+    return RectifiedView(
+        image_bgr=rectified,
+        calibration=calibration,
+        slot_name=slot.name,
+        slot_center_px=slot.center_px or (0.0, 0.0),
+        board_mm=(board_w, board_h),
+        mm_per_px_out=1.0 / ppm,
+        H_img_to_mm=H,
+        warnings=warnings,
+    )
+
+
+def rectify_panel_between_slots(
+    img_bgr: np.ndarray,
+    slot_top: CharucoSlotSpec,
+    cal_top: CalibrationResult,
+    slot_bottom: CharucoSlotSpec,
+    cal_bottom: CalibrationResult,
+    spec: CharucoRectifySpec | None = None,
+    side_margin_mm: float = 120.0,
+) -> RectifiedView:
+    """
+    Flatten the torso strip between two decoded markers (e.g. F0 + F1).
+
+    Interpolates scale between the upper and lower homographies row-by-row so
+    the output accounts for perspective change down the panel.
+    """
+    spec = spec or CharucoRectifySpec()
+    if cal_top.H_px_to_mm is None or cal_bottom.H_px_to_mm is None:
+        raise ValueError("both slots need valid homographies")
+
+    # Panel-mm column span from both boards.
+    boards = (slot_top, slot_bottom)
+    cals = (cal_top, cal_bottom)
+    x_vals: list[float] = []
+    y_vals: list[float] = []
+    for slot, _cal in zip(boards, cals):
+        bw = slot.cols * slot.square_mm
+        bh = slot.rows * slot.square_mm
+        cx = slot.center_x_mm or 0.0
+        cy = slot.center_y_mm or 0.0
+        x_vals.extend([cx - bw / 2, cx + bw / 2])
+        y_vals.extend([cy - bh / 2, cy + bh / 2])
+
+    x0 = min(x_vals) - side_margin_mm
+    x1 = max(x_vals) + side_margin_mm
+    y0 = min(y_vals) - spec.margin_mm
+    y1 = max(y_vals) + spec.margin_mm
+
+    ppm = spec.px_per_mm
+    out_w = max(8, _mm_to_px(x1 - x0, ppm))
+    out_h = max(8, _mm_to_px(y1 - y0, ppm))
+    rectified = np.full((out_h, out_w, 3), spec.fill_bgr, np.uint8)
+
+    y_top_mm = slot_top.center_y_mm or 0.0
+    y_bot_mm = slot_bottom.center_y_mm or 0.0
+    denom = max(1e-6, y_bot_mm - y_top_mm)
+
+    for out_y in range(out_h):
+        mm_y = y0 + out_y / ppm
+        t = float(np.clip((mm_y - y_top_mm) / denom, 0.0, 1.0))
+        H = (1.0 - t) * cal_top.H_px_to_mm + t * cal_bottom.H_px_to_mm
+        T = np.array(
+            [[ppm, 0, -x0 * ppm], [0, 1, -y0 * ppm], [0, 0, 1]],
+            dtype=np.float64,
+        )
+        M_out_to_img = np.linalg.inv(T @ H)
+        src_y = np.full((out_w, 1), out_y, dtype=np.float32)
+        src_x = np.arange(out_w, dtype=np.float32).reshape(-1, 1)
+        src = np.concatenate([src_x, src_y], axis=1).reshape(-1, 1, 2)
+        dst = cv2.perspectiveTransform(src, M_out_to_img).reshape(-1, 2)
+        xs = np.round(dst[:, 0]).astype(np.int32)
+        ys = np.round(dst[:, 1]).astype(np.int32)
+        for out_x in range(out_w):
+            x, y = int(xs[out_x]), int(ys[out_x])
+            if 0 <= x < img_bgr.shape[1] and 0 <= y < img_bgr.shape[0]:
+                rectified[out_y, out_x] = img_bgr[y, x]
+
+    merged_corners = cal_top.charuco_corners + cal_bottom.charuco_corners
+    mm_vals = [v for v in (cal_top.mm_per_px, cal_bottom.mm_per_px) if v]
+    cal_merged = CalibrationResult(
+        float(np.median(mm_vals)) if mm_vals else None,
+        cal_top.H_px_to_mm,
+        merged_corners,
+        cal_top.aruco_ids + cal_bottom.aruco_ids,
+        f"{slot_top.name}+{slot_bottom.name}_blend",
+    )
+    return RectifiedView(
+        image_bgr=rectified,
+        calibration=cal_merged,
+        slot_name=f"{slot_top.name}+{slot_bottom.name}",
+        slot_center_px=(0.0, 0.0),
+        board_mm=(x1 - x0, y1 - y0),
+        mm_per_px_out=1.0 / ppm,
+        H_img_to_mm=cal_top.H_px_to_mm,
+        warnings=["row_blend_homography"],
+    )
+
+
+def auto_rectify_dsv_photo(
+    img_bgr: np.ndarray,
+    slot_name: str,
+    stencil_spec_path: Path | None = None,
+    spec: CharucoRectifySpec | None = None,
+    center_fracs: list[tuple[float, float]] | None = None,
+) -> RectifiedView:
+    """
+    One-shot: find a DSV ChArUco sticker (F0–F3) and return a flattened view.
+
+    Example::
+
+        view = auto_rectify_dsv_photo(front_bgr, \"F1\")
+        cv2.imwrite(\"front_F1_flat.png\", view.image_bgr)
+    """
+    spec = spec or CharucoRectifySpec()
+    slots = default_dsv_marker_slots(stencil_spec_path)
+    if slot_name not in slots:
+        raise KeyError(f"unknown slot {slot_name!r}")
+    slot = slots[slot_name]
+
+    cal, center_px, _ = find_charuco_slot_in_image(
+        img_bgr, slot, spec=spec, center_fracs=center_fracs
+    )
+    slot.center_px = center_px
+    if cal.H_px_to_mm is None:
+        raise ValueError(
+            f"{slot_name}: only {cal.charuco_corners} corners — need >=4 for rectification"
+        )
+
+    # Estimate slot centre in panel-mm from the homography.
+    cx, cy = center_px
+    pt_mm = cal.px_to_mm(np.array([[cx, cy]], dtype=np.float64))[0]
+    slot.center_x_mm = float(pt_mm[0])
+    slot.center_y_mm = float(pt_mm[1])
+
+    return rectify_image_by_charuco(img_bgr, cal, slot, spec)
 
 
 def analyze_stencil_photo(
@@ -1219,7 +1867,7 @@ def pdf_coverage_audit() -> dict[str, Any]:
     """
     items = [
         ("01", "Scale calibration (px/cm)", "partial", "charuco_dsv_lib calibrate_stencil_charuco_roi; dsv_probe_lib calibrate_scale"),
-        ("02", "Perspective correction", "partial", "homography in charuco_dsv_lib; warp not wired in probe"),
+        ("02", "Perspective correction", "partial", "auto_rectify_dsv_photo / rectify_image_by_charuco; not wired in probe"),
         ("03", "Camera distance estimation", "missing", "needs focal length + solvePnP"),
         ("04", "Panel identification (F0–F3)", "partial", "view routing only; no F2/F3 back detection"),
         ("05", "Panel orientation", "missing", "marker corner order check not implemented"),
@@ -2096,6 +2744,290 @@ def _erase_marker_slots(canvas: np.ndarray, slots: list[CharucoSlotSpec], px_per
         _erase_square_patch(canvas, (float(cx), float(cy)), float(side_px))
 
 
+@dataclass
+class CharucoStickerSheetSpec:
+    """
+    Printable ChArUco stickers to cut out and tape onto a worn DSV vest.
+
+    Default geometry matches the production print master (5×4 board, 12 mm squares,
+    60×48 mm footprint). Print at 100% scale — do not use “fit to page”.
+    """
+
+    dpi: float = 300.0
+    cols: int = 5
+    rows: int = 4
+    square_mm: float = 12.0
+    marker_mm: float = 9.0
+    margin_mm: float = 15.0  # white border around each board for tape / trimming
+    sheet_w_mm: float = 210.0  # A4
+    sheet_h_mm: float = 297.0
+    slots: tuple[str, ...] = ("F0", "F1", "F2", "F3")
+    slot_labels: dict[str, str] = field(
+        default_factory=lambda: {
+            "F0": "F0 — FRONT upper chest",
+            "F1": "F1 — FRONT lower abdomen",
+            "F2": "F2 — BACK upper back",
+            "F3": "F3 — BACK lower back",
+        }
+    )
+
+    @property
+    def px_per_mm(self) -> float:
+        return self.dpi / MM_PER_IN
+
+    @property
+    def board_w_mm(self) -> float:
+        return self.cols * self.square_mm
+
+    @property
+    def board_h_mm(self) -> float:
+        return self.rows * self.square_mm
+
+
+def default_dsv_marker_slots(
+    stencil_spec_path: Path | None = None,
+) -> dict[str, CharucoSlotSpec]:
+    """
+    Return F0–F3 ``CharucoSlotSpec`` matching the production DSV print master.
+
+    Loads ``dsv_front_panel_charuco_spec.json`` when present; otherwise uses
+    the built-in PDF / stencil defaults.
+    """
+    root = Path(__file__).resolve().parents[1]
+    candidates = [
+        stencil_spec_path,
+        root / "assets/dsv_charuco/stencils/dsv_front_panel_charuco_spec.json",
+    ]
+    spec_path = next((p for p in candidates if p and p.is_file()), None)
+    if spec_path is not None:
+        meta = json.loads(spec_path.read_text(encoding="utf-8"))
+        return _slots_from_charuco_spec(meta, 1000.0, 1500.0)
+
+    return {
+        "F0": CharucoSlotSpec("F0", dict_name=PDF_DICT, legacy_aruco_id=0),
+        "F1": CharucoSlotSpec("F1", dict_name="DICT_5X5_100", legacy_aruco_id=1),
+        "F2": CharucoSlotSpec("F2", dict_name=PDF_DICT, legacy_aruco_id=2),
+        "F3": CharucoSlotSpec("F3", dict_name="DICT_5X5_50", legacy_aruco_id=3),
+    }
+
+
+def render_charuco_sticker(
+    slot: CharucoSlotSpec,
+    sheet_spec: CharucoStickerSheetSpec | None = None,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Render one labelled sticker (board + white margin) ready to print."""
+    sheet_spec = sheet_spec or CharucoStickerSheetSpec()
+    ppm = sheet_spec.px_per_mm
+    board_bgr, bw_mm, bh_mm, dict_used = _render_charuco_board_bgr(
+        sheet_spec.cols,
+        sheet_spec.rows,
+        sheet_spec.square_mm,
+        sheet_spec.marker_mm,
+        slot.dict_name,
+        ppm,
+    )
+    pad = _mm_to_px(sheet_spec.margin_mm, ppm)
+    sticker = np.full(
+        (board_bgr.shape[0] + 2 * pad, board_bgr.shape[1] + 2 * pad, 3),
+        255,
+        np.uint8,
+    )
+    sticker[pad : pad + board_bgr.shape[0], pad : pad + board_bgr.shape[1]] = board_bgr
+
+    label = sheet_spec.slot_labels.get(slot.name, slot.name)
+    sub = f"{sheet_spec.cols}x{sheet_spec.rows}  {sheet_spec.square_mm:.0f}mm sq  {dict_used}"
+    fs = max(0.35, _font_scale(ppm, 9.0) * 0.55)
+    thick = max(1, _stroke_px(ppm, 0.15))
+    cv2.putText(
+        sticker,
+        label,
+        (pad, max(14, pad - 6)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        fs,
+        (30, 30, 30),
+        thick,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        sticker,
+        sub,
+        (pad, sticker.shape[0] - max(6, pad // 3)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        fs * 0.75,
+        (80, 80, 80),
+        thick,
+        cv2.LINE_AA,
+    )
+
+    corners = _validate_charuco_sticker(board_bgr, sheet_spec, dict_used)
+    meta = {
+        "name": slot.name,
+        "dict": dict_used,
+        "board_mm": [round(bw_mm, 2), round(bh_mm, 2)],
+        "sticker_mm": [
+            round(bw_mm + 2 * sheet_spec.margin_mm, 2),
+            round(bh_mm + 2 * sheet_spec.margin_mm, 2),
+        ],
+        "corners_detected": corners,
+        "corners_expected": (sheet_spec.cols - 1) * (sheet_spec.rows - 1),
+    }
+    return sticker, meta
+
+
+def _validate_charuco_sticker(
+    board_bgr: np.ndarray,
+    sheet_spec: CharucoStickerSheetSpec,
+    dict_name: str,
+) -> int:
+    """Self-check: OpenCV should recover all inner corners on a fresh render."""
+    dictionary = _dictionary(dict_name)
+    board = cv2.aruco.CharucoBoard(
+        (sheet_spec.cols, sheet_spec.rows),
+        sheet_spec.square_mm / 1000.0,
+        sheet_spec.marker_mm / 1000.0,
+        dictionary,
+    )
+    detector = cv2.aruco.CharucoDetector(board, detectorParams=cv2.aruco.DetectorParameters())
+    gray = cv2.cvtColor(board_bgr, cv2.COLOR_BGR2GRAY)
+    charuco_corners, _, _, _ = detector.detectBoard(gray)
+    return 0 if charuco_corners is None else len(charuco_corners)
+
+
+def _layout_charuco_sticker_sheet(
+    stickers: list[tuple[str, np.ndarray]],
+    sheet_spec: CharucoStickerSheetSpec,
+) -> np.ndarray:
+    """Place stickers in a 2×2 grid on an A4 canvas."""
+    ppm = sheet_spec.px_per_mm
+    sheet = np.full(
+        (_mm_to_px(sheet_spec.sheet_h_mm, ppm), _mm_to_px(sheet_spec.sheet_w_mm, ppm), 3),
+        255,
+        np.uint8,
+    )
+    if not stickers:
+        return sheet
+
+    cols_n = 2
+    rows_n = int(np.ceil(len(stickers) / cols_n))
+    label_mm = 12.0
+    gap_mm = 8.0
+    cell_w_mm = sheet_spec.board_w_mm + 2 * sheet_spec.margin_mm + gap_mm
+    cell_h_mm = sheet_spec.board_h_mm + 2 * sheet_spec.margin_mm + label_mm + gap_mm
+    grid_w_mm = cols_n * cell_w_mm - gap_mm
+    grid_h_mm = rows_n * cell_h_mm - gap_mm
+    x0_mm = max(4.0, (sheet_spec.sheet_w_mm - grid_w_mm) / 2.0)
+    y0_mm = max(14.0, (sheet_spec.sheet_h_mm - grid_h_mm) / 2.0)
+
+    for idx, (_, sticker) in enumerate(stickers):
+        row, col = divmod(idx, cols_n)
+        x_mm = x0_mm + col * cell_w_mm
+        y_mm = y0_mm + row * cell_h_mm
+        x_px = max(0, _mm_to_px(x_mm, ppm))
+        y_px = max(0, _mm_to_px(y_mm, ppm))
+        sh, sw = sticker.shape[:2]
+        x1 = min(sheet.shape[1], x_px + sw)
+        y1 = min(sheet.shape[0], y_px + sh)
+        if x1 <= x_px or y1 <= y_px:
+            continue
+        sheet[y_px:y1, x_px:x1] = sticker[: y1 - y_px, : x1 - x_px]
+
+    # cut guides
+    guide = (200, 200, 200)
+    thick = max(1, _stroke_px(ppm, 0.12))
+    for idx in range(len(stickers)):
+        row, col = divmod(idx, cols_n)
+        x_mm = x0_mm + col * cell_w_mm
+        y_mm = y0_mm + row * cell_h_mm
+        x_px = _mm_to_px(x_mm, ppm)
+        y_px = _mm_to_px(y_mm, ppm)
+        cw = _mm_to_px(cell_w_mm, ppm)
+        ch = _mm_to_px(cell_h_mm, ppm)
+        cv2.rectangle(sheet, (x_px, y_px), (x_px + cw - 1, y_px + ch - 1), guide, thick, cv2.LINE_AA)
+
+    title = "DSV ChArUco stickers — print 100% scale, cut on grey lines, tape flat onto vest"
+    fs = max(0.4, _font_scale(ppm, 10.0) * 0.5)
+    cv2.putText(
+        sheet,
+        title,
+        (_mm_to_px(8, ppm), _mm_to_px(10, ppm)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        fs,
+        (40, 40, 40),
+        max(1, thick),
+        cv2.LINE_AA,
+    )
+    return sheet
+
+
+def generate_charuco_sticker_sheet(
+    sheet_spec: CharucoStickerSheetSpec | None = None,
+    out_dir: Path | None = None,
+    stencil_spec_path: Path | None = None,
+) -> dict[str, Any]:
+    """
+    Generate printable ChArUco stickers (F0–F3) for sticking onto a worn DSV.
+
+    Writes:
+      - ``charuco_sticker_<name>.png`` — individual stickers
+      - ``charuco_stickers_a4_<dpi>dpi.png`` + ``.pdf`` — 2×2 A4 sheet
+
+    Returns metadata including per-board corner validation counts.
+    """
+    sheet_spec = sheet_spec or CharucoStickerSheetSpec()
+    out_dir = out_dir or Path("assets/dsv_charuco/stickers")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    slots = default_dsv_marker_slots(stencil_spec_path)
+    stickers: list[tuple[str, np.ndarray]] = []
+    board_meta: dict[str, Any] = {}
+
+    for name in sheet_spec.slots:
+        if name not in slots:
+            raise KeyError(f"unknown slot {name!r}; expected one of {sorted(slots)}")
+        slot = slots[name]
+        slot.cols = sheet_spec.cols
+        slot.rows = sheet_spec.rows
+        slot.square_mm = sheet_spec.square_mm
+        slot.marker_mm = sheet_spec.marker_mm
+        sticker, meta = render_charuco_sticker(slot, sheet_spec)
+        stickers.append((name, sticker))
+        board_meta[name] = meta
+        out_png = out_dir / f"charuco_sticker_{name}.png"
+        cv2.imwrite(str(out_png), sticker, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+        meta["png"] = str(out_png)
+
+    sheet_bgr = _layout_charuco_sticker_sheet(stickers, sheet_spec)
+    dpi_tag = int(sheet_spec.dpi)
+    sheet_png = out_dir / f"charuco_stickers_a4_{dpi_tag}dpi.png"
+    sheet_pdf = out_dir / f"charuco_stickers_a4_{dpi_tag}dpi.pdf"
+    cv2.imwrite(str(sheet_png), sheet_bgr, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+    export_panel_pdf(sheet_bgr, sheet_pdf, sheet_spec.dpi)
+
+    expected = (sheet_spec.cols - 1) * (sheet_spec.rows - 1)
+    all_ok = all(m["corners_detected"] >= expected for m in board_meta.values())
+    meta = {
+        "kind": "dsv_charuco_sticker_sheet",
+        "spec": asdict(sheet_spec),
+        "boards": board_meta,
+        "outputs": {
+            "sheet_png": str(sheet_png),
+            "sheet_pdf": str(sheet_pdf),
+        },
+        "validation_ok": all_ok,
+        "print_instructions": (
+            f"Print charuco_stickers_a4_{dpi_tag}dpi.pdf at 100% scale (NO fit-to-page).\n"
+            f"Each board must measure {sheet_spec.board_w_mm:.0f} mm × {sheet_spec.board_h_mm:.0f} mm "
+            f"({sheet_spec.cols}×{sheet_spec.rows} squares @ {sheet_spec.square_mm:.0f} mm).\n"
+            "Cut on grey lines, tape flat over the matching printed marker on the vest (F0–F3).\n"
+            "Smooth the fabric — wrinkles break ChArUco detection."
+        ),
+    }
+    meta_path = out_dir / f"charuco_stickers_{dpi_tag}dpi_spec.json"
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    meta["spec_json"] = str(meta_path)
+    return meta
+
+
 def export_panel_pdf(panel_bgr: np.ndarray, out_path: Path, dpi: float) -> Path:
     """Single-panel PDF with embedded DPI (one physical DSV piece per file)."""
     try:
@@ -2327,6 +3259,331 @@ def generate_dsv_print_master(
     }
     meta_path = out_dir / f"dsv_print_master_{int(spec.dpi)}dpi_spec.json"
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# DSV vest marker set — 13 uniquely-identifiable ChArUco boards
+# ---------------------------------------------------------------------------
+#
+# The worn sizing vest carries 14 ChArUco markers, one per body landmark below.
+# Each is a known-size board (a metric scale reference): printed at 100% it gives
+# px<->mm scale at that body location, which feeds calibrate_from_charuco /
+# infer_height_cm to recover real height + girths for custom-tailoring fit.
+#
+# All boards share ONE dictionary (DICT_4X4_250) but occupy NON-OVERLAPPING
+# marker-id ranges, so a detector running the dictionary tells exactly which body
+# position each board belongs to:  slot_index = detected_id // VEST_IDS_PER_BOARD.
+#
+# Geometry: 5x4 ChArUco @ 12 mm squares (60x48 mm), 10 marker ids per board.
+# 14 boards -> ids 0..139, well within DICT_4X4_250 (250 ids).
+
+VEST_MARKER_DICT = "DICT_4X4_250"
+VEST_MARKER_COLS = 5
+VEST_MARKER_ROWS = 4
+VEST_MARKER_SQUARE_MM = 12.0
+VEST_MARKER_MARKER_MM = 9.0
+VEST_IDS_PER_BOARD = (VEST_MARKER_COLS * VEST_MARKER_ROWS) // 2  # 10
+
+
+@dataclass
+class VestMarkerSpec:
+    """One uniquely-identifiable ChArUco marker placed on the worn DSV vest."""
+
+    name: str            # short code, e.g. "FSH_L"
+    region: str          # grouping: front / side / back
+    description: str     # human-readable body position
+    id_offset: int       # first marker id (block of VEST_IDS_PER_BOARD ids)
+    cols: int = VEST_MARKER_COLS
+    rows: int = VEST_MARKER_ROWS
+    square_mm: float = VEST_MARKER_SQUARE_MM
+    marker_mm: float = VEST_MARKER_MARKER_MM
+
+    @property
+    def n_markers(self) -> int:
+        return (self.cols * self.rows) // 2
+
+    @property
+    def id_range(self) -> tuple[int, int]:
+        return self.id_offset, self.id_offset + self.n_markers - 1
+
+
+# (code, region, description) in placement order; id_offset assigned sequentially.
+_VEST_MARKER_LAYOUT: tuple[tuple[str, str, str], ...] = (
+    ("FSH_L", "front", "Front shoulder - left"),
+    ("FSH_R", "front", "Front shoulder - right"),
+    ("FB", "front", "Front bust"),
+    ("FW", "front", "Front waist"),
+    ("FH", "front", "Front hip (widest)"),
+    ("SR_U", "side", "Right side - upper"),
+    ("SR_L", "side", "Right side - lower"),
+    ("SL_U", "side", "Left side - upper"),
+    ("SL_L", "side", "Left side - lower"),
+    ("BSH_L", "back", "Back shoulder - left"),
+    ("BSH_R", "back", "Back shoulder - right"),
+    ("UB", "back", "Upper back"),
+    ("MB", "back", "Mid back"),
+    ("LB", "back", "Lower back"),
+)
+
+
+def dsv_vest_marker_set() -> list[VestMarkerSpec]:
+    """The 13 DSV vest markers, each carved a non-overlapping id block."""
+    return [
+        VestMarkerSpec(name=code, region=region, description=desc, id_offset=i * VEST_IDS_PER_BOARD)
+        for i, (code, region, desc) in enumerate(_VEST_MARKER_LAYOUT)
+    ]
+
+
+def _build_charuco_ids_board(
+    cols: int,
+    rows: int,
+    square_mm: float,
+    marker_mm: float,
+    dict_name: str,
+    id_offset: int,
+) -> cv2.aruco.CharucoBoard:
+    """ChArUco board whose marker ids start at id_offset (one shared dictionary)."""
+    n_markers = (cols * rows) // 2
+    cap = dict(_DICT_CAPACITIES).get(dict_name, 0)
+    if id_offset + n_markers > cap:
+        raise ValueError(
+            f"{dict_name} holds {cap} ids; board needs {id_offset}..{id_offset + n_markers - 1}. "
+            "Use a larger dictionary, or fewer/smaller boards."
+        )
+    dictionary = _dictionary(dict_name)
+    ids = np.arange(id_offset, id_offset + n_markers, dtype=np.int32)
+    return cv2.aruco.CharucoBoard(
+        (cols, rows), square_mm / 1000.0, marker_mm / 1000.0, dictionary, ids
+    )
+
+
+def _render_charuco_ids_board_bgr(
+    cols: int,
+    rows: int,
+    square_mm: float,
+    marker_mm: float,
+    dict_name: str,
+    id_offset: int,
+    px_per_mm: float,
+) -> tuple[np.ndarray, float, float, list[int]]:
+    """Render an offset-id ChArUco board; returns (bgr, w_mm, h_mm, marker_ids)."""
+    board = _build_charuco_ids_board(cols, rows, square_mm, marker_mm, dict_name, id_offset)
+    out_w = max(8, _mm_to_px(cols * square_mm, px_per_mm))
+    out_h = max(8, _mm_to_px(rows * square_mm, px_per_mm))
+    img = board.generateImage((out_w, out_h), marginSize=0, borderBits=1)
+    ids = [int(i) for i in board.getIds().flatten()]
+    return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR), cols * square_mm, rows * square_mm, ids
+
+
+def _validate_charuco_ids_board(
+    board_bgr: np.ndarray,
+    cols: int,
+    rows: int,
+    square_mm: float,
+    marker_mm: float,
+    dict_name: str,
+    id_offset: int,
+) -> int:
+    """Self-check: detect the freshly rendered board back; returns inner-corner count."""
+    board = _build_charuco_ids_board(cols, rows, square_mm, marker_mm, dict_name, id_offset)
+    detector = cv2.aruco.CharucoDetector(board, detectorParams=cv2.aruco.DetectorParameters())
+    corners, _, _, _ = detector.detectBoard(cv2.cvtColor(board_bgr, cv2.COLOR_BGR2GRAY))
+    return 0 if corners is None else len(corners)
+
+
+def render_vest_marker_sticker(
+    spec: VestMarkerSpec,
+    sheet: CharucoStickerSheetSpec | None = None,
+    dict_name: str = VEST_MARKER_DICT,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Render one labelled, print-ready vest marker (board + white margin + labels)."""
+    sheet = sheet or CharucoStickerSheetSpec()
+    ppm = sheet.px_per_mm
+    board_bgr, bw_mm, bh_mm, ids = _render_charuco_ids_board_bgr(
+        spec.cols, spec.rows, spec.square_mm, spec.marker_mm, dict_name, spec.id_offset, ppm
+    )
+    pad = _mm_to_px(sheet.margin_mm, ppm)
+    sticker = np.full(
+        (board_bgr.shape[0] + 2 * pad, board_bgr.shape[1] + 2 * pad, 3), 255, np.uint8
+    )
+    sticker[pad : pad + board_bgr.shape[0], pad : pad + board_bgr.shape[1]] = board_bgr
+
+    fs = max(0.35, _font_scale(ppm, 9.0) * 0.55)
+    thick = max(1, _stroke_px(ppm, 0.15))
+    lo, hi = spec.id_range
+    cv2.putText(
+        sticker, f"{spec.name} - {spec.description}", (pad, max(14, pad - 6)),
+        cv2.FONT_HERSHEY_SIMPLEX, fs, (30, 30, 30), thick, cv2.LINE_AA,
+    )
+    sub = f"{dict_name}  ids {lo}-{hi}  {spec.cols}x{spec.rows} @ {spec.square_mm:.0f}mm"
+    cv2.putText(
+        sticker, sub, (pad, sticker.shape[0] - max(6, pad // 3)),
+        cv2.FONT_HERSHEY_SIMPLEX, fs * 0.72, (80, 80, 80), thick, cv2.LINE_AA,
+    )
+
+    corners = _validate_charuco_ids_board(
+        board_bgr, spec.cols, spec.rows, spec.square_mm, spec.marker_mm, dict_name, spec.id_offset
+    )
+    meta = {
+        "name": spec.name,
+        "region": spec.region,
+        "description": spec.description,
+        "dict": dict_name,
+        "id_offset": spec.id_offset,
+        "id_range": [lo, hi],
+        "marker_ids": ids,
+        "board_mm": [round(bw_mm, 2), round(bh_mm, 2)],
+        "sticker_mm": [
+            round(bw_mm + 2 * sheet.margin_mm, 2),
+            round(bh_mm + 2 * sheet.margin_mm, 2),
+        ],
+        "corners_detected": corners,
+        "corners_expected": (spec.cols - 1) * (spec.rows - 1),
+    }
+    return sticker, meta
+
+
+def _layout_vest_marker_pages(
+    stickers: list[tuple[str, np.ndarray]],
+    sheet: CharucoStickerSheetSpec,
+    cols_n: int = 2,
+    rows_n: int = 3,
+) -> list[np.ndarray]:
+    """Tile labelled stickers cols_n x rows_n per A4 page; one image per page."""
+    ppm = sheet.px_per_mm
+    per_page = cols_n * rows_n
+    gap_mm = 8.0
+    label_mm = 12.0
+    cell_w_mm = sheet.board_w_mm + 2 * sheet.margin_mm + gap_mm
+    cell_h_mm = sheet.board_h_mm + 2 * sheet.margin_mm + label_mm + gap_mm
+    grid_w_mm = cols_n * cell_w_mm - gap_mm
+    grid_h_mm = rows_n * cell_h_mm - gap_mm
+    x0_mm = max(4.0, (sheet.sheet_w_mm - grid_w_mm) / 2.0)
+    y0_mm = max(14.0, (sheet.sheet_h_mm - grid_h_mm) / 2.0)
+    guide = (200, 200, 200)
+    thick = max(1, _stroke_px(ppm, 0.12))
+    title_fs = max(0.4, _font_scale(ppm, 10.0) * 0.5)
+
+    n_pages = max(1, int(np.ceil(len(stickers) / per_page)))
+    pages: list[np.ndarray] = []
+    for p in range(n_pages):
+        page = np.full(
+            (_mm_to_px(sheet.sheet_h_mm, ppm), _mm_to_px(sheet.sheet_w_mm, ppm), 3), 255, np.uint8
+        )
+        chunk = stickers[p * per_page : (p + 1) * per_page]
+        for idx, (_, st) in enumerate(chunk):
+            row, col = divmod(idx, cols_n)
+            x_px = max(0, _mm_to_px(x0_mm + col * cell_w_mm, ppm))
+            y_px = max(0, _mm_to_px(y0_mm + row * cell_h_mm, ppm))
+            sh, sw = st.shape[:2]
+            x1 = min(page.shape[1], x_px + sw)
+            y1 = min(page.shape[0], y_px + sh)
+            if x1 > x_px and y1 > y_px:
+                page[y_px:y1, x_px:x1] = st[: y1 - y_px, : x1 - x_px]
+            cw = _mm_to_px(cell_w_mm, ppm)
+            ch = _mm_to_px(cell_h_mm, ppm)
+            cv2.rectangle(page, (x_px, y_px), (x_px + cw - 1, y_px + ch - 1), guide, thick, cv2.LINE_AA)
+        cv2.putText(
+            page,
+            f"DSV vest ChArUco markers - page {p + 1}/{n_pages} - print 100% scale, cut on grey lines",
+            (_mm_to_px(8, ppm), _mm_to_px(10, ppm)),
+            cv2.FONT_HERSHEY_SIMPLEX, title_fs, (40, 40, 40), max(1, thick), cv2.LINE_AA,
+        )
+        pages.append(page)
+    return pages
+
+
+def _export_pages_pdf(pages: list[np.ndarray], out_path: Path, dpi: float) -> Path:
+    """Write a multi-page PDF (one A4 page per image) with embedded DPI."""
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise ImportError("pip install Pillow for PDF export") from exc
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    imgs = [Image.fromarray(cv2.cvtColor(p, cv2.COLOR_BGR2RGB)) for p in pages]
+    imgs[0].save(
+        str(out_path), "PDF", resolution=float(dpi), save_all=True, append_images=imgs[1:]
+    )
+    return out_path
+
+
+def generate_vest_marker_stickers(
+    sheet: CharucoStickerSheetSpec | None = None,
+    out_dir: Path | None = None,
+    dict_name: str = VEST_MARKER_DICT,
+) -> dict[str, Any]:
+    """
+    Generate the 13 uniquely-identifiable DSV vest ChArUco markers.
+
+    Writes:
+      - ``vest_marker_<NAME>.png`` — one labelled sticker per body position
+      - ``vest_markers_a4_p<N>_<dpi>dpi.png`` — paginated A4 sheets (6 per page)
+      - ``vest_markers_a4_<dpi>dpi.pdf`` — multi-page print PDF
+      - ``vest_markers_<dpi>dpi_spec.json`` — name -> region -> id-range map
+
+    Returns metadata with per-board corner validation + the id map used by
+    detection to identify which body landmark each marker belongs to.
+    """
+    sheet = sheet or CharucoStickerSheetSpec()
+    out_dir = out_dir or Path("assets/dsv_charuco/vest_markers")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    markers = dsv_vest_marker_set()
+    stickers: list[tuple[str, np.ndarray]] = []
+    board_meta: dict[str, Any] = {}
+    for spec in markers:
+        sticker, meta = render_vest_marker_sticker(spec, sheet, dict_name)
+        stickers.append((spec.name, sticker))
+        out_png = out_dir / f"vest_marker_{spec.name}.png"
+        cv2.imwrite(str(out_png), sticker, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+        meta["png"] = str(out_png)
+        board_meta[spec.name] = meta
+
+    pages = _layout_vest_marker_pages(stickers, sheet)
+    dpi_tag = int(sheet.dpi)
+    page_pngs: list[str] = []
+    for i, page in enumerate(pages, start=1):
+        page_path = out_dir / f"vest_markers_a4_p{i}_{dpi_tag}dpi.png"
+        cv2.imwrite(str(page_path), page, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+        page_pngs.append(str(page_path))
+    sheet_pdf = out_dir / f"vest_markers_a4_{dpi_tag}dpi.pdf"
+    _export_pages_pdf(pages, sheet_pdf, sheet.dpi)
+
+    all_ok = all(m["corners_detected"] >= m["corners_expected"] for m in board_meta.values())
+    id_map = {
+        name: {"region": m["region"], "description": m["description"], "id_range": m["id_range"]}
+        for name, m in board_meta.items()
+    }
+    meta = {
+        "kind": "dsv_vest_charuco_markers",
+        "dict": dict_name,
+        "ids_per_board": VEST_IDS_PER_BOARD,
+        "marker_count": len(markers),
+        "board_geometry": {
+            "cols": sheet.cols,
+            "rows": sheet.rows,
+            "square_mm": sheet.square_mm,
+            "marker_mm": sheet.marker_mm,
+            "board_mm": [sheet.board_w_mm, sheet.board_h_mm],
+        },
+        "id_map": id_map,
+        "boards": board_meta,
+        "outputs": {"pages_png": page_pngs, "sheet_pdf": str(sheet_pdf)},
+        "validation_ok": all_ok,
+        "print_instructions": (
+            f"Print vest_markers_a4_{dpi_tag}dpi.pdf at 100% scale (NO fit-to-page) over "
+            f"{len(pages)} A4 page(s).\n"
+            f"Each board MUST measure {sheet.board_w_mm:.0f} mm x {sheet.board_h_mm:.0f} mm "
+            f"({sheet.cols}x{sheet.rows} squares @ {sheet.square_mm:.0f} mm) - verify with a ruler; "
+            "the printed size is the scale reference.\n"
+            "Cut on grey lines, tape each marker flat at its labelled body position on the vest.\n"
+            "Smooth the fabric - wrinkles break ChArUco detection."
+        ),
+    }
+    meta_path = out_dir / f"vest_markers_{dpi_tag}dpi_spec.json"
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    meta["spec_json"] = str(meta_path)
     return meta
 
 

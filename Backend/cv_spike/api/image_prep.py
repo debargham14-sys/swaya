@@ -80,3 +80,29 @@ def prepare_scan_paths(paths: dict[str, Path]) -> list[str]:
         warnings.extend(w)
     warnings.extend(downscale_scan_paths(paths))
     return warnings
+
+
+def vest_max_image_edge() -> int:
+    """Higher cap for the ChArUco vest flow — small markers need the resolution."""
+    raw = os.environ.get("VEST_MAX_IMAGE_EDGE", "3500").strip()
+    try:
+        return max(2000, min(int(raw), 6000))
+    except ValueError:
+        return 3500
+
+
+def prepare_vest_paths(paths: dict[str, Path]) -> list[str]:
+    """
+    EXIF upright + a gentle downscale that keeps ChArUco markers detectable.
+
+    Unlike prepare_scan_paths (which shrinks to ~1.5k px for silhouette/pose),
+    the vest markers are small, so cap at VEST_MAX_IMAGE_EDGE (default 3500 px).
+    The normalized photos are what we both measure and archive for re-processing.
+    """
+    warnings: list[str] = []
+    for view in list(paths.keys()):
+        out, w = normalize_orientation(paths[view])
+        paths[view] = out
+        warnings.extend(w)
+    warnings.extend(downscale_scan_paths(paths, max_edge=vest_max_image_edge()))
+    return warnings

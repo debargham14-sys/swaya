@@ -48,6 +48,7 @@ from api.forms import (  # noqa: E402
 )
 from api.routes.calibration import router as calibration_router  # noqa: E402
 from api.routes.scans import router as scans_router  # noqa: E402
+from api.routes.vest import router as vest_router  # noqa: E402
 from pipeline.measure import smpl_backend  # noqa: E402
 from pipeline.measure.measure_engine import measure  # noqa: E402
 
@@ -72,6 +73,7 @@ app.add_middleware(
 app.include_router(scans_router)
 app.include_router(calibration_router)
 app.include_router(assistant_router)
+app.include_router(vest_router)
 
 if _ENABLE_QC:
     from api.routes.qc import router as qc_router  # noqa: E402
@@ -82,10 +84,12 @@ if _ENABLE_QC:
 @app.get("/health")
 def health() -> dict:
     from pipeline.measure.pose_worker import pose_model_status
+    from pipeline.measure.vest_charuco import VEST_CALIBRATION_FACTOR, VEST_DICT
 
     return {
         "status": "ok",
         "backends": smpl_backend.backend_status(),
+        "vest_beta": {"dict": VEST_DICT, "calibration_factor": VEST_CALIBRATION_FACTOR},
         "mongodb": mongo_available(),
         "mongodb_error": mongo_last_error() if not mongo_available() else None,
         "scan_storage": SCAN_STORAGE_BACKEND,

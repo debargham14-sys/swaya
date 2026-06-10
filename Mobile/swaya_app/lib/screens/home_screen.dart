@@ -42,6 +42,13 @@ class HomeScreen extends StatelessWidget {
             },
           ),
           const SizedBox(height: 12),
+          _ActionCard(
+            title: 'Vest scan (beta)',
+            subtitle: 'ChArUco vest → bust, waist, hip',
+            icon: Icons.straighten_outlined,
+            onTap: () => context.push('/vest'),
+          ),
+          const SizedBox(height: 12),
           if (hasResults) ...[
             _ActionCard(
               title: 'Last measurements',

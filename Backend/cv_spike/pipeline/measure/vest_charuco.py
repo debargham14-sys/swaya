@@ -52,24 +52,32 @@ _BAND_REFINE = {
     "hip": {"dy_lo_mm": -20, "dy_hi_mm": 75, "mode": "max"},
 }
 _FRONT_BAND_MARKER = {"FB": "bust", "FW": "waist", "FH": "hip"}
+_BACK_MARKERS = ("BSH_L", "BSH_R", "UB", "MB", "LB")
 
 
 @dataclass
 class VestMeasurement:
-    backend: str = "vest_charuco_front"
+    backend: str = "vest_charuco"
     calibration_factor: float = VEST_CALIBRATION_FACTOR
-    view: str = "unknown"
+    views: list[str] = field(default_factory=list)
     markers_found: list[str] = field(default_factory=list)
     scale_px_per_mm: float | None = None
-    widths_cm: dict[str, float] = field(default_factory=dict)
-    girths_cm: dict[str, float] = field(default_factory=dict)
-    girths_in: dict[str, float] = field(default_factory=dict)
+    # name -> {"cm", "in", "kind": girth|width|length}
+    measurements: dict[str, dict] = field(default_factory=dict)
     confidence: float = 0.0
     warnings: list[str] = field(default_factory=list)
 
+    def add(self, name: str, cm: float, kind: str) -> None:
+        cm = float(cm)  # coerce numpy floats -> JSON-serializable Python float
+        self.measurements[name] = {"cm": round(cm, 1), "in": round(cm / 2.54, 1), "kind": kind}
+
     def to_dict(self) -> dict:
         d = asdict(self)
-        d["measurements_reliable"] = bool(self.girths_cm) and self.confidence >= 0.5
+        # Flat girth maps kept for backward compatibility with existing clients.
+        girth = {k: v for k, v in self.measurements.items() if v["kind"] == "girth"}
+        d["girths_cm"] = {k: v["cm"] for k, v in girth.items()}
+        d["girths_in"] = {k: v["in"] for k, v in girth.items()}
+        d["measurements_reliable"] = bool(girth) and self.confidence >= 0.5
         return d
 
 
@@ -188,39 +196,46 @@ def ellipse_girth_cm(width_cm: float, depth_cm: float, factor: float = VEST_CALI
 _FRONT_ANY = ("FSH_L", "FSH_R", "FB", "FW", "FH")
 
 
-# --- public entry -------------------------------------------------------------
-def measure_vest_front(
-    img_bgr: np.ndarray,
-    calibration_factor: float = VEST_CALIBRATION_FACTOR,
-) -> VestMeasurement:
-    """
-    Measure whatever front bands (bust/waist/hip) are detectable.
+def _span_width_cm(mask, det, left, right, factor_unused=None) -> float | None:
+    """Silhouette width (cm) at the mid-level of two markers — robust to marker x."""
+    cl, cr = det[left]["center"], det[right]["center"]
+    y = int((cl[1] + cr[1]) / 2)
+    cx = int((cl[0] + cr[0]) / 2)
+    scale = (det[left]["px_per_mm"] + det[right]["px_per_mm"]) / 2.0
+    ext = _band_extent(mask, y, cx)
+    if not ext or scale <= 0:
+        return None
+    return (ext[1] - ext[0]) / scale / 10.0
 
-    Degrades gracefully: a single missing marker (e.g. the bust marker on a
-    curved/wrinkled spot) no longer kills the whole result — the bands that ARE
-    found are still measured, with a per-band 'not detected' warning for the rest.
-    """
-    res = VestMeasurement(calibration_factor=calibration_factor)
-    if img_bgr is None or img_bgr.size == 0:
-        res.warnings.append("empty_image")
-        return res
+
+def _vertical_length_cm(det, top_markers, bottom) -> float | None:
+    """Vertical body length (cm) between a top landmark and a bottom marker."""
+    tops = [det[m] for m in top_markers if m in det]
+    if not tops or bottom not in det:
+        return None
+    ty = sum(t["center"][1] for t in tops) / len(tops)
+    by = det[bottom]["center"][1]
+    scale = (sum(t["px_per_mm"] for t in tops) / len(tops) + det[bottom]["px_per_mm"]) / 2.0
+    if scale <= 0:
+        return None
+    return abs(by - ty) / scale / 10.0
+
+
+def _measure_front(img_bgr, factor, res) -> list[float]:
     det = detect_markers(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY))
-    res.markers_found = sorted(det)
+    res.markers_found.extend(det)
     if not any(k in det for k in _FRONT_ANY):
         res.warnings.append("no_front_markers_detected")
-        return res
-    res.view = "front"
-
-    centers = [d["center"] for d in det.values()]
-    mask = segment_garment(img_bgr, centers)
+        return []
+    res.views.append("front")
+    mask = segment_garment(img_bgr, [d["center"] for d in det.values()])
 
     band_scales: list[float] = []
     for marker, band in _FRONT_BAND_MARKER.items():
         if marker not in det:
             res.warnings.append(f"{band}_marker_not_detected")
             continue
-        c = det[marker]["center"]
-        scale = det[marker]["px_per_mm"]
+        c, scale = det[marker]["center"], det[marker]["px_per_mm"]
         r = _BAND_REFINE[band]
         snap = _refine_band(mask, int(c[1]), int(c[0]), scale, r["dy_lo_mm"], r["dy_hi_mm"], r["mode"])
         if snap:
@@ -231,34 +246,104 @@ def measure_vest_front(
                 res.warnings.append(f"no_silhouette_at_{band}")
                 continue
             xl, xr = ext
-        width_cm = (xr - xl) / scale / 10.0
         band_scales.append(scale)
-        res.widths_cm[band] = round(width_cm, 1)
-        g = circular_girth_cm(width_cm, calibration_factor)
-        res.girths_cm[band] = round(g, 1)
-        res.girths_in[band] = round(g / 2.54, 1)
+        res.add(band, circular_girth_cm((xr - xl) / scale / 10.0, factor), "girth")
 
+    if "FSH_L" in det and "FSH_R" in det:
+        sw = _span_width_cm(mask, det, "FSH_L", "FSH_R")
+        if sw:
+            res.add("shoulder_width", sw, "width")
+    fl = _vertical_length_cm(det, ("FSH_L", "FSH_R"), "FH")
+    if fl:
+        res.add("front_length", fl, "length")
+    return band_scales
+
+
+def _measure_back(img_bgr, factor, res) -> None:
+    det = detect_markers(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY))
+    res.markers_found.extend(det)
+    if not any(k in det for k in _BACK_MARKERS):
+        res.warnings.append("no_back_markers_detected")
+        return
+    res.views.append("back")
+    mask = segment_garment(img_bgr, [d["center"] for d in det.values()])
+
+    if "BSH_L" in det and "BSH_R" in det:
+        bw = _span_width_cm(mask, det, "BSH_L", "BSH_R")
+        if bw:
+            res.add("back_shoulder_width", bw, "width")
+    if "UB" in det:
+        c = det["UB"]["center"]
+        ext = _band_extent(mask, int(c[1]), int(c[0]))
+        if ext:
+            res.add("upper_back_width", (ext[1] - ext[0]) / det["UB"]["px_per_mm"] / 10.0, "width")
+    bl = _vertical_length_cm(det, ("BSH_L", "BSH_R"), "LB")
+    if bl:
+        res.add("back_length", bl, "length")
+
+
+def _finalize(res: VestMeasurement, band_scales: list[float]) -> None:
+    res.markers_found = sorted(set(res.markers_found))
     if band_scales:
         res.scale_px_per_mm = round(float(np.median(band_scales)), 2)
-    # Confidence: tightness of per-band scale agreement (proxy for square-on capture).
+    girths = [m for m in res.measurements.values() if m["kind"] == "girth"]
     if len(band_scales) >= 2 and res.scale_px_per_mm:
         spread = float(np.std(band_scales)) / res.scale_px_per_mm
         res.confidence = round(max(0.0, min(1.0, 1.0 - 4.0 * spread)), 2)
         if spread > 0.15:
             res.warnings.append("high_scale_spread_oblique_capture")
     elif len(band_scales) == 1:
-        res.confidence = 0.5  # one band: scale known but no cross-check
-    if not res.girths_cm:
-        res.warnings.append("no_bands_measured")
+        res.confidence = 0.5
+    if not girths:
+        res.warnings.append("no_girths_measured")
+
+
+# --- public entry -------------------------------------------------------------
+def measure_vest_views(
+    front_bgr: np.ndarray | None = None,
+    back_bgr: np.ndarray | None = None,
+    calibration_factor: float = VEST_CALIBRATION_FACTOR,
+) -> VestMeasurement:
+    """
+    Measure the full vest set from front (+ optional back) photos.
+
+    Returns girths (bust/waist/hip), shoulder width + front length from the front,
+    and back shoulder/upper-back width + back length from the back. Degrades
+    gracefully: any band whose marker is missing is skipped with a warning.
+    """
+    res = VestMeasurement(calibration_factor=calibration_factor)
+    band_scales: list[float] = []
+    if front_bgr is not None and front_bgr.size:
+        band_scales = _measure_front(front_bgr, calibration_factor, res)
+    if back_bgr is not None and back_bgr.size:
+        _measure_back(back_bgr, calibration_factor, res)
+    if not res.views:
+        res.warnings.append("no_markers_detected")
+    _finalize(res, band_scales)
     return res
 
 
+def measure_vest_front(
+    img_bgr: np.ndarray,
+    calibration_factor: float = VEST_CALIBRATION_FACTOR,
+) -> VestMeasurement:
+    """Front-only convenience entry (kept for existing callers)."""
+    return measure_vest_views(front_bgr=img_bgr, calibration_factor=calibration_factor)
+
+
+def _read(src) -> np.ndarray | None:
+    if src is None:
+        return None
+    return src if isinstance(src, np.ndarray) else cv2.imread(str(src))
+
+
 def measure_vest(
-    front: str | Path | np.ndarray,
+    front: str | Path | np.ndarray | None,
+    back: str | Path | np.ndarray | None = None,
     calibration_factor: float = VEST_CALIBRATION_FACTOR,
 ) -> dict:
-    """Convenience wrapper: accepts a path or BGR array, returns a result dict."""
-    img = front if isinstance(front, np.ndarray) else cv2.imread(str(front))
-    if img is None:
-        return VestMeasurement(warnings=["cannot_read_front_image"]).to_dict()
-    return measure_vest_front(img, calibration_factor).to_dict()
+    """Convenience wrapper: paths or BGR arrays for front (+ optional back)."""
+    fimg, bimg = _read(front), _read(back)
+    if fimg is None and bimg is None:
+        return VestMeasurement(warnings=["cannot_read_images"]).to_dict()
+    return measure_vest_views(fimg, bimg, calibration_factor).to_dict()

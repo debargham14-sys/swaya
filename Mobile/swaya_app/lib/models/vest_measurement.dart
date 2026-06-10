@@ -27,34 +27,61 @@ class VestScanResult {
   }
 }
 
+/// One measured quantity (girth / width / length).
+class MeasureEntry {
+  const MeasureEntry({required this.name, required this.inches, required this.cm, required this.kind});
+
+  final String name;
+  final double inches;
+  final double cm;
+  final String kind; // girth | width | length
+
+  /// "shoulder_width" -> "Shoulder width"
+  String get label {
+    final s = name.replaceAll('_', ' ');
+    return s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+  }
+}
+
 class VestMeasurement {
   const VestMeasurement({
-    required this.view,
+    required this.views,
     required this.confidence,
     required this.markersFound,
-    required this.girthsCm,
-    required this.girthsIn,
+    required this.entries,
     required this.warnings,
     required this.reliable,
   });
 
-  final String view;
+  final List<String> views;
   final double confidence;
   final List<String> markersFound;
-  final Map<String, double> girthsCm;
-  final Map<String, double> girthsIn;
+  final List<MeasureEntry> entries;
   final List<String> warnings;
   final bool reliable;
 
-  bool get hasGirths => girthsIn.isNotEmpty;
+  bool get hasMeasurements => entries.isNotEmpty;
+  List<MeasureEntry> get girths => entries.where((e) => e.kind == 'girth').toList();
+  List<MeasureEntry> get others => entries.where((e) => e.kind != 'girth').toList();
 
   factory VestMeasurement.fromJson(Map<String, dynamic> json) {
+    final raw = (json['measurements'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final entries = <MeasureEntry>[];
+    raw.forEach((name, v) {
+      if (v is Map) {
+        entries.add(MeasureEntry(
+          name: name,
+          inches: (v['in'] as num?)?.toDouble() ?? 0,
+          cm: (v['cm'] as num?)?.toDouble() ?? 0,
+          kind: v['kind']?.toString() ?? 'girth',
+        ));
+      }
+    });
     return VestMeasurement(
-      view: json['view']?.toString() ?? 'unknown',
+      views: (json['views'] as List?)?.map((e) => e.toString()).toList() ?? const [],
       confidence: (json['confidence'] as num?)?.toDouble() ?? 0.0,
       markersFound: (json['markers_found'] as List?)?.map((e) => e.toString()).toList() ?? const [],
-      girthsCm: _numMap(json['girths_cm']) ?? const {},
-      girthsIn: _numMap(json['girths_in']) ?? const {},
+      entries: entries,
       warnings: (json['warnings'] as List?)?.map((e) => e.toString()).toList() ?? const [],
       reliable: json['measurements_reliable'] == true,
     );

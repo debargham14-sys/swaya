@@ -100,5 +100,5 @@ def test_partial_bands_when_one_marker_missing():
     res = measure_vest_front(canvas)
     assert "FB" not in res.markers_found
     assert "bust_marker_not_detected" in res.warnings
-    # waist/hip markers detected -> view recognized, not a hard failure
-    assert res.view == "front"
+    # waist/hip markers detected -> front view recognized, not a hard failure
+    assert "front" in res.views

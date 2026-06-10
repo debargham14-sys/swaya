@@ -24,6 +24,7 @@ class _VestScanScreenState extends State<VestScanScreen> {
   final _vestApi = VestApi();
 
   CapturedPhoto? _front;
+  CapturedPhoto? _back;
   CapturedPhoto? _sideLeft;
   CapturedPhoto? _sideRight;
 
@@ -64,6 +65,7 @@ class _VestScanScreenState extends State<VestScanScreen> {
       );
       setState(() {
         if (slot == 'front') _front = photo;
+        if (slot == 'back') _back = photo;
         if (slot == 'side_left') _sideLeft = photo;
         if (slot == 'side_right') _sideRight = photo;
       });
@@ -91,6 +93,7 @@ class _VestScanScreenState extends State<VestScanScreen> {
     try {
       final result = await _vestApi.createVestScan(
         front: _front!,
+        back: _back,
         sideLeft: _sideLeft,
         sideRight: _sideRight,
         subjectLabel: _subject.text.trim(),
@@ -127,6 +130,12 @@ class _VestScanScreenState extends State<VestScanScreen> {
             children: [
               Expanded(child: _PhotoSlot(label: 'Front *', photo: _front, onPick: (s) => _pick('front', s))),
               const SizedBox(width: 8),
+              Expanded(child: _PhotoSlot(label: 'Back', photo: _back, onPick: (s) => _pick('back', s))),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
               Expanded(child: _PhotoSlot(label: 'Side L', photo: _sideLeft, onPick: (s) => _pick('side_left', s))),
               const SizedBox(width: 8),
               Expanded(child: _PhotoSlot(label: 'Side R', photo: _sideRight, onPick: (s) => _pick('side_right', s))),

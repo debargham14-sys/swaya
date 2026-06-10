@@ -14,7 +14,6 @@ class VestResultScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final m = result.measurement;
-    final bands = ['bust', 'waist', 'hip'];
 
     return SwayaScaffold(
       title: 'Vest result (beta)',
@@ -38,53 +37,63 @@ class VestResultScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Scan ${result.scanId}',
+            'Scan ${result.scanId}'
+            '${m.views.isNotEmpty ? '  ·  ${m.views.join(' + ')}' : ''}',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(color: SwayaColors.inkTertiary),
           ),
           const SizedBox(height: 20),
-          if (!m.hasGirths)
+          if (!m.hasMeasurements)
             _Empty(warnings: m.warnings)
           else ...[
-            for (final b in bands)
-              if (m.girthsIn[b] != null)
-                _GirthRow(
-                  label: b[0].toUpperCase() + b.substring(1),
-                  inches: m.girthsIn[b]!,
-                  cm: m.girthsCm[b],
-                  groundTruth: result.groundTruthIn?['${b}_in'],
-                ),
+            if (m.girths.isNotEmpty) ...[
+              const _SectionLabel('Girths'),
+              for (final e in m.girths)
+                _MeasureRow(entry: e, groundTruth: result.groundTruthIn?['${e.name}_in']),
+            ],
+            if (m.others.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const _SectionLabel('Other measurements'),
+              for (final e in m.others) _MeasureRow(entry: e),
+            ],
             const SizedBox(height: 16),
             Text(
               'Markers: ${m.markersFound.join(', ')}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: SwayaColors.inkTertiary),
             ),
           ],
-          if (m.warnings.isNotEmpty && m.hasGirths) ...[
+          if (m.warnings.isNotEmpty && m.hasMeasurements) ...[
             const SizedBox(height: 12),
             _Warnings(warnings: m.warnings),
           ],
           const SizedBox(height: 28),
-          ElevatedButton(
-            onPressed: () => context.go('/vest'),
-            child: const Text('New vest scan'),
-          ),
+          ElevatedButton(onPressed: () => context.go('/vest'), child: const Text('New vest scan')),
           const SizedBox(height: 10),
-          OutlinedButton(
-            onPressed: () => context.go('/home'),
-            child: const Text('Done'),
-          ),
+          OutlinedButton(onPressed: () => context.go('/home'), child: const Text('Done')),
         ],
       ),
     );
   }
 }
 
-class _GirthRow extends StatelessWidget {
-  const _GirthRow({required this.label, required this.inches, this.cm, this.groundTruth});
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+  final String text;
 
-  final String label;
-  final double inches;
-  final double? cm;
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(text,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: SwayaColors.inkSecondary,
+                )),
+      );
+}
+
+class _MeasureRow extends StatelessWidget {
+  const _MeasureRow({required this.entry, this.groundTruth});
+
+  final MeasureEntry entry;
   final double? groundTruth;
 
   @override
@@ -99,25 +108,22 @@ class _GirthRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Expanded(
-            child: Text(label, style: Theme.of(context).textTheme.titleMedium),
-          ),
+          Expanded(child: Text(entry.label, style: Theme.of(context).textTheme.titleMedium)),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                '${inches.toStringAsFixed(1)} in',
+                '${entry.inches.toStringAsFixed(1)} in',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w600,
                       color: SwayaColors.accentHighlight,
                     ),
               ),
-              if (cm != null)
-                Text(
-                  '${cm!.toStringAsFixed(1)} cm'
-                  '${groundTruth != null ? '  ·  tape ${groundTruth!.toStringAsFixed(1)} in' : ''}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: SwayaColors.inkSecondary),
-                ),
+              Text(
+                '${entry.cm.toStringAsFixed(1)} cm'
+                '${groundTruth != null ? '  ·  tape ${groundTruth!.toStringAsFixed(1)} in' : ''}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: SwayaColors.inkSecondary),
+              ),
             ],
           ),
         ],
@@ -140,8 +146,7 @@ class _Empty extends StatelessWidget {
         Text('No measurement', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 4),
         Text(
-          'The vest markers (front bust/waist/hip) were not all found. Retake square-on '
-          'with the markers flat and fully in frame.',
+          'No vest markers were detected. Retake square-on with the markers flat and fully in frame.',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: SwayaColors.inkSecondary),
         ),
         const SizedBox(height: 12),

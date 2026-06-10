@@ -61,6 +61,7 @@ def _require_mongo() -> None:
 @router.post("")
 async def create_vest_scan(
     front: UploadFile = File(..., description="Front worn-vest photo (required)"),
+    back: Optional[UploadFile] = File(None, description="Back worn-vest photo (optional)"),
     side_left: Optional[UploadFile] = File(None, description="Left side profile (optional)"),
     side_right: Optional[UploadFile] = File(None, description="Right side profile (optional)"),
     subject_label: Optional[str] = Form(None, description="Participant name or ID"),
@@ -78,7 +79,7 @@ async def create_vest_scan(
     Returns the beta measurement (front bust/waist/hip girths + confidence +
     warnings). Works without MongoDB (measurement only, ``stored=false``).
     """
-    uploads = {"front": front, "side_left": side_left, "side_right": side_right}
+    uploads = {"front": front, "back": back, "side_left": side_left, "side_right": side_right}
     gt = VestGroundTruthIn(bust_in=bust_in, waist_in=waist_in, hip_in=hip_in, height_cm=height_cm)
 
     with tempfile.TemporaryDirectory(prefix="dsv_vest_") as tmp:

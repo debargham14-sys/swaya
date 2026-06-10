@@ -20,6 +20,7 @@ class VestApi {
 
   Future<VestScanResult> createVestScan({
     required CapturedPhoto front,
+    CapturedPhoto? back,
     CapturedPhoto? sideLeft,
     CapturedPhoto? sideRight,
     String? subjectLabel,
@@ -54,6 +55,7 @@ class VestApi {
     }
 
     attach('front', front);
+    attach('back', back);
     attach('side_left', sideLeft);
     attach('side_right', sideRight);
 

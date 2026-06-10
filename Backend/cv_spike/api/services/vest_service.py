@@ -19,7 +19,7 @@ import cv2
 
 from api.db.mongo import get_db, mongo_available
 from api.storage.photo_store import serialize_photos, store_photos
-from pipeline.measure.vest_charuco import measure_vest_front
+from pipeline.measure.vest_charuco import measure_vest_views
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +43,17 @@ def process_vest_scan(
 ) -> dict[str, Any]:
     """Measure the front vest photo, persist the record, return a JSON-safe doc."""
     front = paths.get("front")
-    img = cv2.imread(str(front)) if front and Path(front).is_file() else None
-    if img is None:
-        measurement = {"warnings": ["cannot_read_front_image"], "measurements_reliable": False}
+    back = paths.get("back")
+    fimg = cv2.imread(str(front)) if front and Path(front).is_file() else None
+    bimg = cv2.imread(str(back)) if back and Path(back).is_file() else None
+    if fimg is None and bimg is None:
+        measurement = {"warnings": ["cannot_read_images"], "measurements_reliable": False}
     else:
         from api.services.vest_calibration import active_factor
 
-        measurement = measure_vest_front(img, calibration_factor=active_factor()).to_dict()
+        measurement = measure_vest_views(
+            front_bgr=fimg, back_bgr=bimg, calibration_factor=active_factor()
+        ).to_dict()
 
     scan_id = _new_scan_id()
     doc: dict[str, Any] = {

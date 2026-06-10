@@ -74,9 +74,21 @@ class VestMeasurement:
 
 
 # --- detection ----------------------------------------------------------------
+def _detector_params() -> cv2.aruco.DetectorParameters:
+    """Tuned for small / slightly curved markers on worn fabric (better recall)."""
+    p = cv2.aruco.DetectorParameters()
+    p.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+    p.adaptiveThreshWinSizeMin = 3
+    p.adaptiveThreshWinSizeMax = 53
+    p.adaptiveThreshWinSizeStep = 8
+    p.minMarkerPerimeterRate = 0.02   # accept smaller markers
+    p.polygonalApproxAccuracyRate = 0.06
+    return p
+
+
 def detect_markers(gray: np.ndarray) -> dict[str, dict]:
     dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, VEST_DICT))
-    detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
+    detector = cv2.aruco.ArucoDetector(dictionary, _detector_params())
     corners, ids, _ = detector.detectMarkers(gray)
     acc: dict[int, dict] = {}
     if ids is None:
@@ -163,36 +175,50 @@ def _refine_band(mask, y0, cx, px_per_mm, dy_lo_mm, dy_hi_mm, mode) -> tuple[int
 
 
 # --- girth --------------------------------------------------------------------
-def circular_girth_cm(width_cm: float) -> float:
-    return math.pi * width_cm * VEST_CALIBRATION_FACTOR
+def circular_girth_cm(width_cm: float, factor: float = VEST_CALIBRATION_FACTOR) -> float:
+    return math.pi * width_cm * factor
 
 
-def ellipse_girth_cm(width_cm: float, depth_cm: float) -> float:
+def ellipse_girth_cm(width_cm: float, depth_cm: float, factor: float = VEST_CALIBRATION_FACTOR) -> float:
     a, b = width_cm / 2.0, depth_cm / 2.0
     h = ((a - b) / (a + b)) ** 2 if (a + b) else 0.0
-    return float(math.pi * (a + b) * (1 + 3 * h / (10 + math.sqrt(4 - 3 * h)))) * VEST_CALIBRATION_FACTOR
+    return float(math.pi * (a + b) * (1 + 3 * h / (10 + math.sqrt(4 - 3 * h)))) * factor
+
+
+_FRONT_ANY = ("FSH_L", "FSH_R", "FB", "FW", "FH")
 
 
 # --- public entry -------------------------------------------------------------
-def measure_vest_front(img_bgr: np.ndarray) -> VestMeasurement:
-    """Measure bust/waist/hip from a front worn-vest photo."""
-    res = VestMeasurement()
+def measure_vest_front(
+    img_bgr: np.ndarray,
+    calibration_factor: float = VEST_CALIBRATION_FACTOR,
+) -> VestMeasurement:
+    """
+    Measure whatever front bands (bust/waist/hip) are detectable.
+
+    Degrades gracefully: a single missing marker (e.g. the bust marker on a
+    curved/wrinkled spot) no longer kills the whole result — the bands that ARE
+    found are still measured, with a per-band 'not detected' warning for the rest.
+    """
+    res = VestMeasurement(calibration_factor=calibration_factor)
     if img_bgr is None or img_bgr.size == 0:
         res.warnings.append("empty_image")
         return res
     det = detect_markers(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY))
     res.markers_found = sorted(det)
-    if not all(k in det for k in ("FB", "FW", "FH")):
-        res.warnings.append("missing_front_band_markers")
+    if not any(k in det for k in _FRONT_ANY):
+        res.warnings.append("no_front_markers_detected")
         return res
     res.view = "front"
 
     centers = [d["center"] for d in det.values()]
     mask = segment_garment(img_bgr, centers)
-    scales = [det[m]["px_per_mm"] for m in ("FB", "FW", "FH")]
-    res.scale_px_per_mm = round(float(np.median(scales)), 2)
 
+    band_scales: list[float] = []
     for marker, band in _FRONT_BAND_MARKER.items():
+        if marker not in det:
+            res.warnings.append(f"{band}_marker_not_detected")
+            continue
         c = det[marker]["center"]
         scale = det[marker]["px_per_mm"]
         r = _BAND_REFINE[band]
@@ -206,26 +232,33 @@ def measure_vest_front(img_bgr: np.ndarray) -> VestMeasurement:
                 continue
             xl, xr = ext
         width_cm = (xr - xl) / scale / 10.0
+        band_scales.append(scale)
         res.widths_cm[band] = round(width_cm, 1)
-        g = circular_girth_cm(width_cm)
+        g = circular_girth_cm(width_cm, calibration_factor)
         res.girths_cm[band] = round(g, 1)
         res.girths_in[band] = round(g / 2.54, 1)
 
-    # Confidence: how tightly the per-band marker scales agree (a proxy for how
-    # square-on the capture was; wide spread => oblique/foreshortened).
-    if len(scales) >= 2 and res.scale_px_per_mm:
-        spread = float(np.std(scales)) / res.scale_px_per_mm
+    if band_scales:
+        res.scale_px_per_mm = round(float(np.median(band_scales)), 2)
+    # Confidence: tightness of per-band scale agreement (proxy for square-on capture).
+    if len(band_scales) >= 2 and res.scale_px_per_mm:
+        spread = float(np.std(band_scales)) / res.scale_px_per_mm
         res.confidence = round(max(0.0, min(1.0, 1.0 - 4.0 * spread)), 2)
         if spread > 0.15:
             res.warnings.append("high_scale_spread_oblique_capture")
-    if len(res.girths_cm) < 3:
-        res.warnings.append("incomplete_bands")
+    elif len(band_scales) == 1:
+        res.confidence = 0.5  # one band: scale known but no cross-check
+    if not res.girths_cm:
+        res.warnings.append("no_bands_measured")
     return res
 
 
-def measure_vest(front: str | Path | np.ndarray) -> dict:
+def measure_vest(
+    front: str | Path | np.ndarray,
+    calibration_factor: float = VEST_CALIBRATION_FACTOR,
+) -> dict:
     """Convenience wrapper: accepts a path or BGR array, returns a result dict."""
     img = front if isinstance(front, np.ndarray) else cv2.imread(str(front))
     if img is None:
         return VestMeasurement(warnings=["cannot_read_front_image"]).to_dict()
-    return measure_vest_front(img).to_dict()
+    return measure_vest_front(img, calibration_factor).to_dict()

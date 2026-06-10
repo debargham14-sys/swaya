@@ -47,7 +47,9 @@ def process_vest_scan(
     if img is None:
         measurement = {"warnings": ["cannot_read_front_image"], "measurements_reliable": False}
     else:
-        measurement = measure_vest_front(img).to_dict()
+        from api.services.vest_calibration import active_factor
+
+        measurement = measure_vest_front(img, calibration_factor=active_factor()).to_dict()
 
     scan_id = _new_scan_id()
     doc: dict[str, Any] = {

@@ -75,5 +75,30 @@ def test_vest_endpoint_runs_without_markers(client):
     body = res.json()
     assert body["kind"] == "vest"
     assert body["measurement"]["measurements_reliable"] is False
-    assert "missing_front_band_markers" in body["measurement"]["warnings"]
+    assert "no_front_markers_detected" in body["measurement"]["warnings"]
     assert body["ground_truth_in"] == {"bust_in": 38.5}
+
+
+def test_partial_bands_when_one_marker_missing():
+    """A missing bust marker still yields waist + hip (graceful degradation)."""
+    import numpy as np
+
+    from pipeline.measure.vest_charuco import VEST_MARKER_NAMES, measure_vest_front
+
+    # Compose a canvas with FW (waist) + FH (hip) boards but NO FB (bust).
+    canvas = np.full((1600, 1200, 3), 235, np.uint8)
+
+    def place(name: str, cy: int) -> None:
+        off = VEST_MARKER_NAMES.index(name) * IDS_PER_BOARD
+        board = cv2.cvtColor(_render_board(off, square_px=70), cv2.COLOR_GRAY2BGR)
+        h, w = board.shape[:2]
+        x = (canvas.shape[1] - w) // 2
+        canvas[cy:cy + h, x:x + w] = board
+
+    place("FW", 620)
+    place("FH", 1040)
+    res = measure_vest_front(canvas)
+    assert "FB" not in res.markers_found
+    assert "bust_marker_not_detected" in res.warnings
+    # waist/hip markers detected -> view recognized, not a hard failure
+    assert res.view == "front"

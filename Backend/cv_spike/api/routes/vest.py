@@ -127,6 +127,25 @@ def list_scans(limit: int = 30) -> dict:
     return {"scans": list_vest_scans(limit=limit)}
 
 
+# NOTE: /calibration must be declared before /{scan_id} or the path param eats it.
+@router.get("/calibration")
+def get_calibration() -> dict:
+    """Current factor + what re-fitting from accumulated ground truth would suggest."""
+    _require_mongo()
+    from api.services.vest_calibration import recompute_calibration
+
+    return recompute_calibration(apply=False)
+
+
+@router.post("/calibration/recompute")
+def recompute_calibration_endpoint(apply: bool = False) -> dict:
+    """Re-fit the calibration factor from ground-truth pairs; pass apply=true to persist it."""
+    _require_mongo()
+    from api.services.vest_calibration import recompute_calibration
+
+    return recompute_calibration(apply=apply)
+
+
 @router.get("/{scan_id}")
 def get_scan(scan_id: str) -> dict:
     _require_mongo()

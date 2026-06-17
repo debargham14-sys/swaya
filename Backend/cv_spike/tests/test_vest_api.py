@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from pipeline.measure import vest_charuco
 from pipeline.measure.vest_charuco import (
     IDS_PER_BOARD,
     VEST_CALIBRATION_FACTOR,
@@ -14,6 +15,7 @@ from pipeline.measure.vest_charuco import (
     VEST_MARKER_NAMES,
     circular_girth_cm,
     detect_markers,
+    shoulder_to_shoulder_cm,
 )
 
 
@@ -57,6 +59,40 @@ def test_detect_markers_maps_id_block_to_landmark():
 def test_circular_girth_applies_calibration():
     # width 24.26 cm -> circular circumference 76.2 cm, x1.04 calibration.
     assert circular_girth_cm(24.26) == pytest.approx(np.pi * 24.26 * VEST_CALIBRATION_FACTOR)
+
+
+def test_shoulder_to_shoulder_from_pose(monkeypatch):
+    """Ported algorithm: shoulder = ||L_SHO - R_SHO|| / scale, in cm."""
+    # 2 px/mm => 20 px/cm. Shoulders 800 px apart => 40 cm.
+    det = {"BSH_L": {"px_per_mm": 2.0}, "BSH_R": {"px_per_mm": 2.0}}
+    monkeypatch.setattr(
+        vest_charuco,
+        "_pose_landmarks",
+        lambda _img: {"l_shoulder": [100, 500], "r_shoulder": [900, 500]},
+    )
+    cm, warn = shoulder_to_shoulder_cm(np.zeros((1000, 1000, 3), np.uint8), det)
+    assert cm == pytest.approx(40.0)
+    assert warn is None
+
+
+def test_shoulder_to_shoulder_flags_implausible(monkeypatch):
+    det = {"BSH_L": {"px_per_mm": 2.0}, "BSH_R": {"px_per_mm": 2.0}}
+    # 1600 px apart => 80 cm, outside the typical adult range.
+    monkeypatch.setattr(
+        vest_charuco,
+        "_pose_landmarks",
+        lambda _img: {"l_shoulder": [100, 500], "r_shoulder": [1700, 500]},
+    )
+    cm, warn = shoulder_to_shoulder_cm(np.zeros((1000, 2000, 3), np.uint8), det)
+    assert cm == pytest.approx(80.0)
+    assert warn == "shoulder_out_of_typical_range"
+
+
+def test_shoulder_to_shoulder_no_pose(monkeypatch):
+    monkeypatch.setattr(vest_charuco, "_pose_landmarks", lambda _img: None)
+    cm, warn = shoulder_to_shoulder_cm(np.zeros((10, 10, 3), np.uint8), {})
+    assert cm is None
+    assert warn == "pose_not_detected_for_shoulder"
 
 
 def test_vest_endpoint_requires_front(client):

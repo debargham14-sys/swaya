@@ -12,6 +12,16 @@ Algorithm (validated on a size-12 form, front view, to ~1.5% after calibration):
      (bust = widest, waist = narrowest, hip = widest, bounded window)
   4. front edge-to-edge width -> circular girth x VEST_CALIBRATION_FACTOR
 
+Shoulder-to-shoulder (``shoulder_to_shoulder_back``) is measured separately, ported
+from Swaya-Studio/ImageToMeasurements (1cm branch): a SURFACE arc along the 1-inch
+printed grid between the back-shoulder silhouette tips — count 1-inch grid cells for
+the horizontal span, add the vertical slope, ``thread = hypot(du, dv)``. The grid is
+foreshortening-immune, so this includes the body curvature a flat width misses; scale
+comes from the BSH patches (never the endpoints). See ``vest_shoulder_grid.py``. When
+the grid can't be read it falls back to the pose-landmark straight distance. This is
+distinct from the silhouette ``back_shoulder_width`` (flat garment span, kept as a
+cross-check).
+
 Scope/limits: front view only is trusted; side depth (true ellipse girth) and
 height are not reliable from current captures. The calibration factor is fit to
 ONE form — collect tailor ground truth and re-fit before trusting absolutely.
@@ -27,6 +37,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+
+from pipeline.measure.vest_shoulder_grid import measure_back_shoulder
 
 # --- vest marker scheme (mirrors notebooks/charuco_dsv_lib.py registry) -------
 VEST_DICT = "DICT_4X4_250"
@@ -53,6 +65,11 @@ _BAND_REFINE = {
 }
 _FRONT_BAND_MARKER = {"FB": "bust", "FW": "waist", "FH": "hip"}
 _BACK_MARKERS = ("BSH_L", "BSH_R", "UB", "MB", "LB")
+
+# Shoulder-to-shoulder (acromion-to-acromion) plausibility range, cm. Ported from
+# Swaya-Studio/ImageToMeasurements (typical adult ~33-50 cm); outside this we flag
+# rather than drop, since a wrong marker size or a petite subject can both land here.
+SHOULDER_MIN_CM, SHOULDER_MAX_CM = 30.0, 52.0
 
 
 @dataclass
@@ -221,6 +238,51 @@ def _vertical_length_cm(det, top_markers, bottom) -> float | None:
     return abs(by - ty) / scale / 10.0
 
 
+# --- shoulder-to-shoulder (ported from Swaya-Studio/ImageToMeasurements) -------
+def _pose_landmarks(img_bgr: np.ndarray) -> dict | None:
+    """MediaPipe pose landmarks (full-image px) via the shared markerless worker,
+    which already handles the macOS GL subprocess + multi-scale fallback. Pose is
+    best-effort here — never let it break the marker-based measurement."""
+    try:
+        from pipeline.measure.markerless import _run_pose_landmarker
+
+        landmarks, _ = _run_pose_landmarker(img_bgr)
+    except Exception:  # noqa: BLE001
+        return None
+    return landmarks or None
+
+
+def shoulder_to_shoulder_cm(
+    img_bgr: np.ndarray,
+    det: dict[str, dict],
+    scale_markers: tuple[str, ...] = ("BSH_L", "BSH_R"),
+) -> tuple[float | None, str | None]:
+    """Acromion-to-acromion shoulder width (cm), ported from Swaya-Studio/
+    ImageToMeasurements (``shoulder_cm = ||L_SHO - R_SHO|| / px_per_cm``).
+
+    Difference from the upstream repo: the absolute scale comes from our own
+    per-board 9 mm markers at shoulder level (``scale_markers``) rather than a
+    single chest patch, so it is the local px/mm right where we measure. Falls
+    back to the median scale across all detected boards. Returns (cm, warning).
+    """
+    landmarks = _pose_landmarks(img_bgr)
+    if not landmarks:
+        return None, "pose_not_detected_for_shoulder"
+    ls, rs = landmarks.get("l_shoulder"), landmarks.get("r_shoulder")
+    if not ls or not rs:
+        return None, "shoulders_not_located"
+    scales = [det[m]["px_per_mm"] for m in scale_markers if m in det]
+    if not scales:
+        scales = [d["px_per_mm"] for d in det.values()]
+    if not scales:
+        return None, "no_scale_for_shoulder"
+    px_per_mm = float(np.mean(scales))
+    dist_px = float(np.hypot(ls[0] - rs[0], ls[1] - rs[1]))
+    cm = dist_px / px_per_mm / 10.0
+    warn = None if SHOULDER_MIN_CM <= cm <= SHOULDER_MAX_CM else "shoulder_out_of_typical_range"
+    return cm, warn
+
+
 def _measure_front(img_bgr, factor, res) -> list[float]:
     det = detect_markers(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY))
     res.markers_found.extend(det)
@@ -272,6 +334,26 @@ def _measure_back(img_bgr, factor, res) -> None:
         bw = _span_width_cm(mask, det, "BSH_L", "BSH_R")
         if bw:
             res.add("back_shoulder_width", bw, "width")
+
+    # Shoulder-to-shoulder along the 1-inch printed grid (surface arc, foreshortening-
+    # immune) — ported from Swaya-Studio/ImageToMeasurements (1cm branch). The grid
+    # carries the body curvature a flat width misses; scale comes from the BSH patches,
+    # which are never the endpoints. Falls back to the pose-landmark straight distance
+    # only when the silhouette gives no shoulder tips at all.
+    sg = measure_back_shoulder(img_bgr, det)
+    if sg is not None:
+        res.add("shoulder_to_shoulder_back", sg["thread_cm"], "width")
+        if sg["n_lines"] < 2:
+            res.warnings.append("shoulder_grid_not_read_used_scale")
+        if not SHOULDER_MIN_CM <= sg["thread_cm"] <= SHOULDER_MAX_CM:
+            res.warnings.append("shoulder_out_of_typical_range")
+    else:
+        cm, warn = shoulder_to_shoulder_cm(img_bgr, det)
+        if cm is not None:
+            res.add("shoulder_to_shoulder_back", cm, "width")
+            res.warnings.append("shoulder_used_pose_fallback")
+        if warn:
+            res.warnings.append(warn)
     if "UB" in det:
         c = det["UB"]["center"]
         ext = _band_extent(mask, int(c[1]), int(c[0]))
@@ -308,8 +390,10 @@ def measure_vest_views(
     Measure the full vest set from front (+ optional back) photos.
 
     Returns girths (bust/waist/hip), shoulder width + front length from the front,
-    and back shoulder/upper-back width + back length from the back. Degrades
-    gracefully: any band whose marker is missing is skipped with a warning.
+    and back shoulder/upper-back width + back length from the back, plus the
+    pose-based acromion-to-acromion ``shoulder_to_shoulder_back``. Degrades
+    gracefully: any band whose marker is missing is skipped with a warning, and a
+    failed pose detection simply omits the shoulder-to-shoulder number.
     """
     res = VestMeasurement(calibration_factor=calibration_factor)
     band_scales: list[float] = []

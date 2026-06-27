@@ -127,6 +127,30 @@ def _context_block(orders: list | None, personas: list | None) -> str:
     return "\n\n".join(parts)
 
 
+def _chat_system(gender: str, garment: str | None) -> str:
+    """Conversational persona for the interactive assistant (vs the one-shot
+    suggestion prompt). Chats naturally and only gives specs when asked."""
+    gender = (gender or "female").lower()
+    garments = ", ".join(_GARMENTS_BY_GENDER.get(gender, _GARMENTS_BY_GENDER["female"]))
+    focus = f"They are currently looking at a {garment}. " if garment else ""
+    return (
+        "You are Swaya's friendly clothing fit and design assistant for Indian "
+        f"tailoring and ready-to-wear. The customer is {gender}. {focus}\n"
+        "Chat naturally and conversationally. Greet warmly, keep small talk brief, "
+        "and answer what the user actually asks.\n"
+        "You can help with garment ideas, fit and sizing, fabrics, colours and "
+        "styling, and questions about the user's saved people and past orders "
+        "(provided below when available).\n"
+        f"When suggesting garments, only suggest ones appropriate for a {gender} "
+        f"customer, choosing from: {garments}.\n"
+        "Only give specific measurements or ease numbers when the user asks about "
+        "fit or sizing — do NOT dump garment specs in response to a greeting or a "
+        "general question.\n"
+        "Keep replies short (1–4 sentences) and warm. Use bullet points only when "
+        "listing a few options."
+    )
+
+
 def _rule_suggest(
     measurements: dict[str, Any], *, calibrated: bool, gender: str = "female"
 ) -> dict[str, Any]:
@@ -192,9 +216,18 @@ def _rule_chat(
     user_message: str,
     orders: list[dict[str, Any]] | None = None,
 ) -> str:
-    lower = user_message.lower()
+    lower = user_message.lower().strip()
     g = measurements.get("girths_cm") or {}
     bust, waist, hip = g.get("bust"), g.get("waist"), g.get("hip")
+
+    if any(lower == w or lower.startswith(w) for w in ("hi", "hello", "hey", "namaste")):
+        return ("Hi! I'm your Swaya design assistant. I can suggest garments, help "
+                "with fit and fabrics, or answer questions about your orders. What "
+                "would you like?")
+
+    if any(w in lower for w in ("what can you", "help", "who are you")):
+        return ("I can suggest garments for your measurements, advise on fit, ease, "
+                "fabrics and styling, and tell you about your saved orders. Ask away!")
 
     if any(w in lower for w in ("order", "ordered", "delivery", "status", "track")):
         if orders:
@@ -214,8 +247,8 @@ def _rule_chat(
     if "hip" in lower and hip is not None:
         return f"Hip {hip:.1f} cm — use for bottoms; add 4–6 cm ease for lehenga or palazzo."
     return (
-        f"I have bust {bust or '—'} cm, waist {waist or '—'} cm, hip {hip or '—'} cm. "
-        "Ask about a specific garment (blouse, kurta, lehenga) or ease."
+        "Happy to help! Ask me to suggest a garment, advise on fit or fabric, or "
+        "tell you about your orders."
     )
 
 
@@ -348,11 +381,7 @@ async def chat_reply(
         prompt += "Conversation:\n" + "\n".join(hist_lines) + "\n"
     prompt += f"User: {user_message}\nAssistant:"
 
-    text = await _call_llm(
-        system=_suggest_system(gender, garment)
-        + "\nAnswer the user's question in 2–4 short sentences.",
-        user_text=prompt,
-    )
+    text = await _call_llm(system=_chat_system(gender, garment), user_text=prompt)
     if text:
         return {"reply": text, "source": "llm"}
 

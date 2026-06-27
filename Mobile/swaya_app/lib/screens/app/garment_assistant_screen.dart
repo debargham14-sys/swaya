@@ -54,7 +54,15 @@ class _GarmentAssistantScreenState extends State<GarmentAssistantScreen> {
   @override
   void initState() {
     super.initState();
-    _seed();
+    // Open with a friendly greeting rather than dumping a suggestion — keeps it
+    // feeling like a chat. Suggestions are one tap away via the quick prompts.
+    final who = widget.personaName != null ? ' for ${widget.personaName}' : '';
+    _messages.add(_Msg(
+      'assistant',
+      "Hi! I'm your Swaya design assistant$who. I can suggest garments, help with "
+          'fit, fabrics and styling, or answer questions about your orders. '
+          'What would you like?',
+    ));
   }
 
   @override
@@ -62,35 +70,6 @@ class _GarmentAssistantScreenState extends State<GarmentAssistantScreen> {
     _controller.dispose();
     _scroll.dispose();
     super.dispose();
-  }
-
-  Future<void> _seed() async {
-    setState(() => _loading = true);
-    try {
-      final s = await _api.suggestForGarment(
-        girthsCm: _girths,
-        gender: widget.gender,
-        garment: widget.garment,
-      );
-      if (!mounted) return;
-      setState(() {
-        _messages.add(_Msg(
-          'assistant',
-          s.suggestions.trim().isNotEmpty
-              ? s.suggestions
-              : 'Hi! Ask me about garments, fit, fabrics, or your orders.',
-        ));
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _messages.add(_Msg('assistant',
-            'Hi! Ask me about garments, fit, fabrics, or your orders.'));
-        _loading = false;
-      });
-    }
-    _scrollToEnd();
   }
 
   void _scrollToEnd() {

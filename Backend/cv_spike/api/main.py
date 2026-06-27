@@ -6,7 +6,7 @@ Flows:
   aruco   — photos + 50 mm ArUco marker
 
 Beta:
-  POST /v1/scans — persist to MongoDB + downloadable ZIP (OBJ when mesh backend available)
+  POST /v1/scans — persist to DynamoDB + downloadable ZIP (OBJ when mesh backend available)
 
 Run:
   cd Backend/cv_spike
@@ -35,8 +35,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from api.db.mongo import mongo_available, mongo_last_error  # noqa: E402
-from api.settings import PHOTO_STORAGE, SCAN_STORAGE_BACKEND  # noqa: E402
+from api.auth import auth_enabled  # noqa: E402
+from api.db.dynamo import dynamo_available, dynamo_last_error  # noqa: E402
+from api.settings import AUTH_REQUIRED, PHOTO_STORAGE, SCAN_STORAGE_BACKEND  # noqa: E402
 from api.storage.photo_store import photo_storage_status  # noqa: E402
 from api.routes.assistant import router as assistant_router  # noqa: E402
 from api.forms import (  # noqa: E402
@@ -47,7 +48,10 @@ from api.forms import (  # noqa: E402
     save_upload,
 )
 from api.routes.calibration import router as calibration_router  # noqa: E402
+from api.routes.orders import router as orders_router  # noqa: E402
+from api.routes.personas import router as personas_router  # noqa: E402
 from api.routes.scans import router as scans_router  # noqa: E402
+from api.routes.users import router as users_router  # noqa: E402
 from api.routes.vest import router as vest_router  # noqa: E402
 from pipeline.measure import smpl_backend  # noqa: E402
 from pipeline.measure.measure_engine import measure  # noqa: E402
@@ -60,7 +64,7 @@ app = FastAPI(
     description=(
         "Estimate body girths from profile photos.\n\n"
         "**Measure:** `POST /v1/measure` or `/v1/measure/height` (stateless).\n\n"
-        "**Beta scans:** `POST /v1/scans` stores results in MongoDB and returns a "
+        "**Beta scans:** `POST /v1/scans` stores results in DynamoDB and returns a "
         "downloadable ZIP with `manifest.json`, `measurements.json`, photos, and optional `body.obj`."
     ),
 )
@@ -74,6 +78,9 @@ app.include_router(scans_router)
 app.include_router(calibration_router)
 app.include_router(assistant_router)
 app.include_router(vest_router)
+app.include_router(users_router)
+app.include_router(personas_router)
+app.include_router(orders_router)
 
 if _ENABLE_QC:
     from api.routes.qc import router as qc_router  # noqa: E402
@@ -90,11 +97,12 @@ def health() -> dict:
         "status": "ok",
         "backends": smpl_backend.backend_status(),
         "vest_beta": {"dict": VEST_DICT, "calibration_factor": VEST_CALIBRATION_FACTOR},
-        "mongodb": mongo_available(),
-        "mongodb_error": mongo_last_error() if not mongo_available() else None,
+        "dynamodb": dynamo_available(),
+        "dynamodb_error": dynamo_last_error() if not dynamo_available() else None,
         "scan_storage": SCAN_STORAGE_BACKEND,
         "photo_storage": photo_storage_status(),
         "qc_enabled": _ENABLE_QC,
+        "auth": {"firebase": auth_enabled(), "required": AUTH_REQUIRED},
         "pose_model": pose_model_status(),
     }
 

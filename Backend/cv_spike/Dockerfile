@@ -20,7 +20,10 @@ COPY api/ api/
 COPY pipeline/ pipeline/
 
 ENV PYTHONUNBUFFERED=1
-ENV SCAN_STORAGE_BACKEND=gridfs
+# Cloud defaults: DynamoDB metadata + S3 blobs (no DB binaries). The EC2/Terraform
+# deploy injects AWS_REGION, DYNAMO_TABLE_PREFIX, and S3_BUCKET at runtime.
+ENV SCAN_STORAGE_BACKEND=s3
+ENV PHOTO_STORAGE=s3
 ENV BUNDLE_TRY_MESH=0
 # Accuracy-first defaults. MediaPipe pose+segmentation on all views; GrabCut is a
 # downscaled fallback only. Tune for speed via env if needed.

@@ -154,7 +154,15 @@ class _ChatScreenState extends State<ChatScreen> {
                         backgroundColor: SwayaColors.elevated,
                         side: const BorderSide(color: SwayaColors.borderSubtle),
                         onPressed: () {
-                          _controller.text = 'Tell me more about my $entry measurement';
+                          // Set text *and* place the caret at the end so the IME
+                          // doesn't fight a stale selection at offset 0.
+                          final text =
+                              'Tell me more about my $entry measurement';
+                          _controller.value = TextEditingValue(
+                            text: text,
+                            selection:
+                                TextSelection.collapsed(offset: text.length),
+                          );
                         },
                       ),
                 ],

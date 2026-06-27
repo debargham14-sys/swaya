@@ -17,7 +17,9 @@ class VestResultScreen extends StatelessWidget {
 
     return SwayaScaffold(
       title: 'Vest result (beta)',
-      leading: BackButton(onPressed: () => context.go('/home')),
+      leading: BackButton(
+          onPressed: () =>
+              context.canPop() ? context.pop() : context.go('/home')),
       body: ListView(
         children: [
           Row(

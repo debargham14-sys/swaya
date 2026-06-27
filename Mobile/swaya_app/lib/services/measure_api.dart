@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import '../models/captured_photo.dart';
 import '../models/measurement_result.dart';
+import 'auth_token.dart';
 
 class MeasureApiException implements Exception {
   MeasureApiException(this.message, {this.statusCode});
@@ -62,6 +63,7 @@ class MeasureApi {
     attach('back', back);
     attach('side', side);
 
+    request.headers.addAll(await authHeaders());
     final streamed = await _client.send(request).timeout(const Duration(minutes: 3));
     final body = await streamed.stream.bytesToString();
 

@@ -7,8 +7,9 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.9
 httpx>=0.27.0
-pymongo>=4.6.0
-dnspython>=2.4.0   # mongodb+srv (MongoDB Atlas)
+boto3>=1.34.0   # DynamoDB (scan/calibration metadata) + S3 (photo/bundle blobs)
+moto>=5.0.0   # in-process AWS mock for tests (DynamoDB + S3)
+firebase-admin>=6.5.0   # verify Firebase ID tokens on protected routes
 mediapipe>=0.10   # markerless estimator (pose + person segmentation, Tasks API)
 # --- V2 measurement engine (3D mesh) ---
 trimesh>=4.0      # mesh cross-section girth

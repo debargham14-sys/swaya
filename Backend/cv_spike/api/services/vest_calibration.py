@@ -3,7 +3,7 @@ Vest calibration feedback loop.
 
 As tailors submit tape ground truth alongside scans, this re-fits the single
 global calibration factor (girth = pi * width * factor) from the accumulated
-(estimate, ground-truth) pairs. The active factor is stored in MongoDB and used
+(estimate, ground-truth) pairs. The active factor is stored in DynamoDB and used
 by new measurements; it falls back to the code default when unset/offline.
 
 Flow: scans accumulate ground truth -> POST /v1/vest/calibration/recompute
@@ -17,23 +17,26 @@ import statistics
 from datetime import datetime, timezone
 from typing import Any
 
-from api.db.mongo import get_db, mongo_available
-from api.services.vest_service import VEST_COLLECTION
+from boto3.dynamodb.conditions import Attr
+
+from api.db.dynamo import dynamo_available, from_item, get_table, to_item
+from api.services.vest_service import VEST_TABLE
 from pipeline.measure.vest_charuco import VEST_CALIBRATION_FACTOR
 
 logger = logging.getLogger(__name__)
 
-CALIB_COLLECTION = "vest_calibration"
+CALIB_TABLE = "vest_calibration"
 _ACTIVE_ID = "active"
 _BANDS = ("bust", "waist", "hip")
 
 
 def active_factor() -> float:
     """Current calibration factor — DB-stored if present, else the code default."""
-    if not mongo_available():
+    if not dynamo_available():
         return VEST_CALIBRATION_FACTOR
     try:
-        doc = get_db()[CALIB_COLLECTION].find_one({"_id": _ACTIVE_ID})
+        item = get_table(CALIB_TABLE).get_item(Key={"id": _ACTIVE_ID}).get("Item")
+        doc = from_item(item) if item else None
         if doc and isinstance(doc.get("factor"), (int, float)):
             return float(doc["factor"])
     except Exception as exc:  # noqa: BLE001
@@ -43,11 +46,18 @@ def active_factor() -> float:
 
 def _gather_pairs() -> list[dict[str, Any]]:
     """One record per (scan, band) with a stored estimate AND a tape ground truth."""
-    cur = get_db()[VEST_COLLECTION].find(
-        {"ground_truth_in": {"$ne": None}}, {"_id": 0, "scan_id": 1, "measurement": 1, "ground_truth_in": 1}
-    )
+    table = get_table(VEST_TABLE)
+    items: list[dict[str, Any]] = []
+    resp = table.scan(FilterExpression=Attr("ground_truth_in").exists() & Attr("ground_truth_in").ne(None))
+    items.extend(resp.get("Items", []))
+    while "LastEvaluatedKey" in resp:
+        resp = table.scan(
+            FilterExpression=Attr("ground_truth_in").exists() & Attr("ground_truth_in").ne(None),
+            ExclusiveStartKey=resp["LastEvaluatedKey"],
+        )
+        items.extend(resp.get("Items", []))
     pairs: list[dict[str, Any]] = []
-    for s in cur:
+    for s in (from_item(it) for it in items):
         m = s.get("measurement") or {}
         gt = s.get("ground_truth_in") or {}
         cf = float(m.get("calibration_factor") or VEST_CALIBRATION_FACTOR)
@@ -66,8 +76,8 @@ def _gather_pairs() -> list[dict[str, Any]]:
 def recompute_calibration(apply: bool = False) -> dict[str, Any]:
     """Re-fit the global factor from ground-truth pairs; optionally persist it."""
     current = active_factor()
-    if not mongo_available():
-        return {"samples": 0, "current_factor": current, "applied": False, "reason": "mongo_unavailable"}
+    if not dynamo_available():
+        return {"samples": 0, "current_factor": current, "applied": False, "reason": "dynamo_unavailable"}
 
     pairs = _gather_pairs()
     n = len(pairs)
@@ -96,15 +106,14 @@ def recompute_calibration(apply: bool = False) -> dict[str, Any]:
     }
 
     if apply:
-        get_db()[CALIB_COLLECTION].update_one(
-            {"_id": _ACTIVE_ID},
-            {"$set": {
+        get_table(CALIB_TABLE).put_item(
+            Item=to_item({
+                "id": _ACTIVE_ID,
                 "factor": suggested,
                 "samples": n,
                 "fitted_at": datetime.now(timezone.utc).isoformat(),
                 "mean_abs_error_pct": result["mean_abs_error_pct"]["suggested"],
-            }},
-            upsert=True,
+            })
         )
         result["applied"] = True
         logger.info("vest calibration applied: %.4f from %d samples", suggested, n)

@@ -9,8 +9,28 @@ cd Backend/cv_spike
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -r notebooks/requirements.txt   # optional: Jupyter probe
 bash scripts/setup_4dhumans.sh   # optional, for height / 4D-Humans flow
 ```
+
+### DSV line-probe notebook (OpenCV)
+
+Interactive **front / back / side** viewer: draws neck, shoulder, bust, underbust,
+waist, hip, and hem lines; detects magenta DSV bands + ArUco scale; exports JSON.
+
+```bash
+cd Backend/cv_spike
+source .venv/bin/activate
+jupyter notebook notebooks/dsv_measurement_probe.ipynb
+```
+
+Open the notebook and **run Cell 1 (Install)** first — it installs
+`notebooks/requirements-probe.txt` (opencv, mediapipe, widgets) into the active
+kernel, then downloads `models/pose_landmarker.task` if missing.
+
+Default images: `spike_data/user_capture/{front,back,side}.jpg` — edit paths in the
+notebook config cell. With a **printed DSV**, align sliders to magenta bands and
+compare girths to side-panel OCR readouts.
 
 Place the SMPL neutral model for 4D-Humans: see `models/smpl/README.md`.
 

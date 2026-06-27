@@ -12,4 +12,7 @@ class AppConfig {
   static const String healthPath = '/health';
   static const String assistantSuggestPath = '/v1/assistant/suggest';
   static const String assistantChatPath = '/v1/assistant/chat';
+  static const String personasPath = '/v1/personas';
+  static const String userSyncPath = '/v1/users/me';
+  static const String ordersPath = '/v1/orders';
 }

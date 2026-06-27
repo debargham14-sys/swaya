@@ -10,11 +10,12 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from api.db.mongo import mongo_available, mongo_last_error
+from api.auth import current_uid
+from api.db.dynamo import dynamo_available, dynamo_last_error
 from api.forms import MeasureMode, PreferKind, RefKind, resolve_measure_request, save_upload
 from api.image_prep import prepare_scan_paths
 from api.services.scan_service import ScanService, process_uploaded_scan
@@ -43,33 +44,33 @@ class GroundTruthBody(BaseModel):
         return out
 
 
-def _require_mongo() -> None:
-    if not mongo_available():
+def _require_db() -> None:
+    if not dynamo_available():
         raise HTTPException(
             status_code=503,
-            detail=f"MongoDB unavailable: {mongo_last_error() or 'connection failed'}",
+            detail=f"DynamoDB unavailable: {dynamo_last_error() or 'connection failed'}",
         )
 
 
 @router.get("")
-def list_scans(limit: int = 30) -> dict:
-    _require_mongo()
-    return {"scans": ScanService().list_scans(limit=min(limit, 100))}
+def list_scans(limit: int = 30, uid: str = Depends(current_uid)) -> dict:
+    _require_db()
+    return {"scans": ScanService().list_scans(limit=min(limit, 100), user_id=uid)}
 
 
 @router.get("/{scan_id}")
-def get_scan(scan_id: str) -> dict:
-    _require_mongo()
-    doc = ScanService().get_scan(scan_id)
+def get_scan(scan_id: str, uid: str = Depends(current_uid)) -> dict:
+    _require_db()
+    doc = ScanService().get_scan(scan_id, user_id=uid)
     if not doc:
         raise HTTPException(status_code=404, detail="Scan not found")
     return doc
 
 
 @router.get("/{scan_id}/bundle")
-def download_bundle(scan_id: str):
-    _require_mongo()
-    opened = ScanService().open_bundle(scan_id)
+def download_bundle(scan_id: str, uid: str = Depends(current_uid)):
+    _require_db()
+    opened = ScanService().open_bundle(scan_id, user_id=uid)
     if not opened:
         raise HTTPException(status_code=404, detail="Bundle not found")
     stream_or_path, filename, _size = opened
@@ -87,12 +88,12 @@ def download_bundle(scan_id: str):
 
 
 @router.get("/{scan_id}/photos/{view}")
-def download_photo(scan_id: str, view: str):
-    """Download a raw capture photo (front, back, or side) from GridFS."""
-    _require_mongo()
+def download_photo(scan_id: str, view: str, uid: str = Depends(current_uid)):
+    """Download a raw capture photo (front, back, or side) from S3 or local disk."""
+    _require_db()
     if view not in ("front", "back", "side"):
         raise HTTPException(status_code=400, detail="view must be front, back, or side")
-    opened = ScanService().open_photo(scan_id, view)
+    opened = ScanService().open_photo(scan_id, view, user_id=uid)
     if not opened:
         raise HTTPException(status_code=404, detail="Photo not found")
     stream, filename, content_type = opened
@@ -124,12 +125,13 @@ async def create_scan(
         None, description="Subject consented to photo storage and measurement"
     ),
     notes: Optional[str] = Form(None, description="Optional notes for this capture session"),
+    uid: str = Depends(current_uid),
 ) -> dict:
     """
     Upload photos, run measurement, build beta ZIP (manifest + JSON + photos + optional body.obj),
-    persist metadata + raw photos + bundle to MongoDB (GridFS by default).
+    persist metadata to DynamoDB; photos + bundle to S3 or local disk.
     """
-    _require_mongo()
+    _require_db()
     flow, height_cm, ref, prefer = resolve_measure_request(mode, height_cm, ref, prefer)
 
     suffix = {
@@ -162,6 +164,7 @@ async def create_scan(
                 collector_id=collector_id,
                 consent_given=consent_given,
                 notes=notes,
+                user_id=uid,
             )
             logger.info("scan %s processed in %.1fs", doc.get("scan_id"), time.perf_counter() - t0)
         except FileNotFoundError as exc:
@@ -179,16 +182,18 @@ async def create_scan(
 
 
 @router.patch("/{scan_id}/ground-truth")
-def save_ground_truth(scan_id: str, body: GroundTruthBody) -> dict:
+def save_ground_truth(
+    scan_id: str, body: GroundTruthBody, uid: str = Depends(current_uid)
+) -> dict:
     """Save tape-measured girths for this scan (training / calibration dataset)."""
-    _require_mongo()
+    _require_db()
     payload = body.to_cm_dict()
     if not payload:
         raise HTTPException(
             status_code=422,
             detail="Provide at least one girth in cm (bust_cm, waist_cm, hip_cm, underbust_cm).",
         )
-    doc = ScanService().save_ground_truth(scan_id, payload)
+    doc = ScanService().save_ground_truth(scan_id, payload, user_id=uid)
     if not doc:
         raise HTTPException(status_code=404, detail="Scan not found")
     logger.info("scan %s ground_truth saved: %s", scan_id, list(payload.keys()))

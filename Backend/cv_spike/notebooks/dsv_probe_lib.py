@@ -772,6 +772,377 @@ def compute_measurements(
     return rows
 
 
+# --- ChArUco rectified measurement (F0–F3 stickers) ---
+
+_CHARUCO_SLOT_BY_VIEW: dict[str, str] = {
+    "front": "F1",
+    "back": "F3",
+}
+
+
+def orient_view_bgr(name: str, bgr: np.ndarray) -> np.ndarray:
+    """Rotate landscape phone captures to portrait (person upright)."""
+    if bgr.shape[1] > bgr.shape[0]:
+        return cv2.rotate(bgr, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return bgr
+
+
+def calibrate_scale_charuco(
+    view: ViewData,
+    slot_name: str,
+    stencil_spec_path: Path | None = None,
+) -> Any:
+    """Set ``view.cm_per_px`` from a decoded ChArUco sticker (F0–F3)."""
+    import charuco_dsv_lib as clib
+
+    slots = clib.default_dsv_marker_slots(stencil_spec_path)
+    if slot_name not in slots:
+        view.warnings.append(f"charuco:unknown_slot:{slot_name}")
+        return None
+    cal, center_px, _ = clib.find_charuco_slot_in_image(
+        view.bgr, slots[slot_name], spec=clib.CharucoRectifySpec()
+    )
+    if cal.mm_per_px and cal.charuco_corners >= 4:
+        view.cm_per_px = cal.mm_per_px / 10.0
+        view.scale_method = f"charuco_{slot_name}"
+        view.warnings.append(f"charuco:{slot_name}:{cal.charuco_corners}corners")
+        setattr(view, "charuco_cal", cal)
+        setattr(view, "charuco_slot", slot_name)
+        setattr(view, "charuco_center_px", center_px)
+        return cal
+    view.warnings.append(f"charuco:{slot_name}:only_{cal.charuco_corners}_corners")
+    return None
+
+
+def detect_stencil_band_rows(bgr: np.ndarray, min_span_frac: float = 0.08) -> dict[str, int]:
+    """Multi-colour DSV band rows (bust / underbust / waist / hip / hip2)."""
+    import charuco_dsv_lib as clib
+
+    return clib.detect_stencil_measurement_lines(bgr, min_span_frac=min_span_frac)
+
+
+def init_level_ys_from_bands(views: dict[str, ViewData]) -> dict[str, dict[str, int]]:
+    """Place girth rows from coloured stencil bands; propagate to side/back via pose."""
+    out: dict[str, dict[str, int]] = {}
+    front = views.get("front")
+    band_rows: dict[str, int] = {}
+    if front:
+        band_rows = detect_stencil_band_rows(front.bgr)
+        out["front"] = {lv: default_level_y(front, lv) for lv in LEVELS}
+        for lv in ("bust", "underbust", "waist", "hip", "hem"):
+            if lv == "hem" and "hip2" in band_rows:
+                out["front"]["hem"] = band_rows["hip2"]
+            elif lv in band_rows:
+                out["front"][lv] = band_rows[lv]
+
+    if front and front.pose and band_rows:
+        ref_lv = next((lv for lv in ("waist", "bust", "hip") if lv in band_rows), None)
+        if ref_lv:
+            ref_y = out["front"][ref_lv]
+            ref_frac = _torso_frac(front.pose, ref_y)
+            for vname, vd in views.items():
+                if vname == "front" or not vd.pose:
+                    continue
+                out.setdefault(vname, {lv: default_level_y(vd, lv) for lv in LEVELS})
+                side_bands = detect_stencil_band_rows(vd.bgr)
+                for lv in ("bust", "underbust", "waist", "hip"):
+                    if lv in side_bands:
+                        out[vname][lv] = side_bands[lv]
+                    elif lv in out.get("front", {}):
+                        out[vname][lv] = _y_from_torso_frac(vd.pose, ref_frac + (
+                            _torso_frac(front.pose, out["front"][lv]) - ref_frac
+                        ))
+    else:
+        for vname, vd in views.items():
+            out.setdefault(vname, {lv: default_level_y(vd, lv) for lv in LEVELS})
+    return out
+
+
+def _rectified_vest_mask(rectified_bgr: np.ndarray) -> np.ndarray:
+    """Foreground mask on a flattened panel (vest + body, not white fill)."""
+    hsv = cv2.cvtColor(rectified_bgr, cv2.COLOR_BGR2HSV)
+    mask = ((hsv[:, :, 1] > 18) | (hsv[:, :, 2] < 248)).astype(np.uint8) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    return mask
+
+
+def _native_row_to_rectified_y(
+    y_native: int,
+    center_x_native: float,
+    cal: Any,
+    panel_bounds_mm: tuple[float, float, float, float],
+    px_per_mm: float,
+) -> int:
+    """Map a horizontal row in the original photo to rectified canvas Y."""
+    pt_mm = cal.px_to_mm(
+        np.array([[center_x_native, float(y_native)]], dtype=np.float64)
+    )[0]
+    _x0, y0, _x1, _y1 = panel_bounds_mm
+    return int(round((float(pt_mm[1]) - y0) * px_per_mm))
+
+
+def _width_cm_rectified_row(mask: np.ndarray, y: int, cm_per_px: float, pose: dict | None = None) -> float | None:
+    """Central torso run on a rectified row (pose ignored — native coords invalid here)."""
+    h, w = mask.shape
+    y = int(np.clip(y, 0, h - 1))
+    row = mask[y]
+    # search central 55% of canvas only (drops panel wings)
+    x_margin = int(w * 0.225)
+    seg = row[x_margin : w - x_margin]
+    xs = np.where(seg > 128)[0]
+    if len(xs) < 2:
+        return None
+    splits = np.where(np.diff(xs) > 2)[0]
+    groups = np.split(xs, splits + 1)
+    best = max(groups, key=len)
+    if len(best) < 2:
+        return None
+    width_px = best[-1] - best[0]
+    return round(width_px * cm_per_px, 2)
+
+
+def measure_rectified_front_widths(
+    front_bgr: np.ndarray,
+    slot_name: str = "F1",
+    panel_margin_mm: float = 220.0,
+    stencil_spec_path: Path | None = None,
+    pose: dict | None = None,
+) -> tuple[Any, dict[str, float], dict[str, int]]:
+    """
+    Flatten the front panel via ChArUco and measure vest width at band rows.
+
+    Band rows are detected on the native photo, then mapped into rectified Y
+    via the ChArUco homography so bust / waist / hip align correctly.
+
+    Returns ``(rectified_view, widths_cm, band_rows_rect_px)``.
+    """
+    import charuco_dsv_lib as clib
+
+    spec = clib.CharucoRectifySpec(px_per_mm=3.0, margin_mm=40.0)
+    slots = clib.default_dsv_marker_slots(stencil_spec_path)
+    slot = slots[slot_name]
+    cal, center_px, _ = clib.find_charuco_slot_in_image(front_bgr, slot, spec=spec)
+    if cal.H_px_to_mm is None or cal.charuco_corners < 4:
+        raise ValueError(f"{slot_name}: need >=4 ChArUco corners for rectified measure")
+
+    slot.center_px = center_px
+    pt_mm = cal.px_to_mm(np.array([[center_px[0], center_px[1]]], dtype=np.float64))[0]
+    slot.center_x_mm = float(pt_mm[0])
+    slot.center_y_mm = float(pt_mm[1])
+
+    bounds = clib._board_extent_mm(slot, panel_margin_mm)
+    flat = clib.rectify_image_by_charuco(front_bgr, cal, slot, spec, panel_mm_bounds=bounds)
+    native_bands = detect_stencil_band_rows(front_bgr, min_span_frac=0.08)
+    mask = _rectified_vest_mask(flat.image_bgr)
+    cm_per_px = flat.mm_per_px_out / 10.0
+
+    band_rows_rect: dict[str, int] = {}
+    widths: dict[str, float] = {}
+    for lv, y_nat in native_bands.items():
+        key = "hem" if lv == "hip2" else lv
+        if key not in _GIRTH_LEVELS and key != "hem":
+            continue
+        y_rect = _native_row_to_rectified_y(
+            y_nat, center_px[0], cal, bounds, spec.px_per_mm
+        )
+        band_rows_rect[key] = y_rect
+        w = _width_cm_rectified_row(mask, y_rect, cm_per_px, pose)
+        if w:
+            widths[key] = w
+    return flat, widths, band_rows_rect
+
+
+def run_charuco_rectified_measurement(
+    paths: dict[str, str | Path],
+    height_cm: float = 170.0,
+    body_profile: BodyProfile | None = None,
+    tape_cm: dict[str, float] | None = None,
+    out_dir: Path | None = None,
+) -> dict[str, Any]:
+    """
+    One-shot measurement using ChArUco scale + rectified front widths.
+
+    * Front width: flattened panel via F1 (fallback F0)
+    * Side depth: native side mask at band-synced rows
+    * Scale: ChArUco on front/back when decodable, else stature
+    """
+    import charuco_dsv_lib as clib
+
+    profile = body_profile or BodyProfile(sex="male", build="average", clothing="dsv_vest")
+    out_dir = out_dir or (ROOT / "assets/dsv_charuco/rectified")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    views: dict[str, ViewData] = {}
+    for name, path in paths.items():
+        vd = analyze_view(name, path)
+        vd.bgr = orient_view_bgr(name, vd.bgr)
+        ml = _import_markerless()
+        mask_raw, pose, warn = ml.analyze_view(vd.bgr)
+        vd.mask_raw = mask_raw
+        vd.mask = refine_body_mask(mask_raw, pose, name)
+        vd.pose = pose
+        vd.top_px, vd.bottom_px = _vertical_extent(mask_raw)
+        if warn:
+            vd.warnings.append(warn)
+        slot = _CHARUCO_SLOT_BY_VIEW.get(name)
+        if slot and not calibrate_scale_charuco(vd, slot):
+            calibrate_scale(vd, height_cm=height_cm)
+        elif not slot:
+            calibrate_scale(vd, height_cm=height_cm)
+        views[name] = vd
+
+    flat = None
+    rect_widths: dict[str, float] = {}
+    rect_bands: dict[str, int] = {}
+    band_widths: dict[str, float] = {}
+    band_width_detail: dict[str, Any] = {}
+    front_slot = "F1"
+    front = views.get("front")
+    front_cal = getattr(front, "charuco_cal", None) if front else None
+    if front:
+        for try_slot in ("F1", "F0"):
+            try:
+                flat, rect_widths, rect_bands = measure_rectified_front_widths(
+                    front.bgr, try_slot, pose=front.pose
+                )
+                front_slot = try_slot
+                if flat.calibration.mm_per_px:
+                    front.cm_per_px = flat.calibration.mm_per_px / 10.0
+                    front.scale_method = f"charuco_{try_slot}_rectified"
+                    front_cal = flat.calibration
+                cv2.imwrite(
+                    str(out_dir / f"front_{try_slot}_flat.png"),
+                    flat.image_bgr,
+                    [cv2.IMWRITE_PNG_COMPRESSION, 1],
+                )
+                break
+            except ValueError:
+                continue
+
+        native_bands = detect_stencil_band_rows(front.bgr, min_span_frac=0.08)
+        band_hits = clib.measure_front_widths_from_bands(
+            front.bgr,
+            band_rows=native_bands,
+            body_mask=front.mask,
+            mm_per_px=front_cal.mm_per_px if front_cal else None,
+            calibration=front_cal,
+        )
+        for lv, hit in band_hits.items():
+            key = "hem" if lv == "hip2" else lv
+            if key not in _GIRTH_LEVELS and key != "hem":
+                continue
+            ref_w = rect_widths.get(key)
+            if ref_w and hit.width_cm < 0.45 * ref_w:
+                hit.warnings.append(f"rejected:narrow_vs_rectified({hit.width_cm:.1f}<{ref_w:.1f}cm)")
+                band_width_detail[key] = {
+                    "level": lv,
+                    "y_px": hit.y_px,
+                    "width_cm": hit.width_cm,
+                    "width_in": hit.width_in,
+                    "rejected": True,
+                    "warnings": hit.warnings,
+                }
+                continue
+            band_widths[key] = hit.width_cm
+            band_width_detail[key] = {
+                    "level": lv,
+                    "y_px": hit.y_px,
+                    "width_cm": hit.width_cm,
+                    "width_in": hit.width_in,
+                    "left_x": hit.left_x,
+                    "right_x": hit.right_x,
+                    "px_per_eighth_in": hit.px_per_eighth_in,
+                    "scale_source": hit.scale_source,
+                    "edge_source": hit.edge_source,
+                    "warnings": hit.warnings,
+                }
+
+    # One ChArUco scale for all views (height is NOT used for px scale when markers decode)
+    charuco_cpp = [
+        v.cm_per_px for v in views.values() if v.scale_method.startswith("charuco")
+    ]
+    if charuco_cpp:
+        scale = float(np.median(charuco_cpp))
+        for v in views.values():
+            v.cm_per_px = scale
+            v.scale_method = v.scale_method.replace("height_stature", "charuco_unified")
+            if "charuco_unified" not in v.scale_method:
+                v.scale_method = f"charuco_unified({v.scale_method})"
+
+    unify_scales(views)
+    level_ys = init_level_ys_from_bands(views)
+    if rect_bands and front:
+        for lv, y in rect_bands.items():
+            key = "hem" if lv == "hip2" else lv
+            if key in LEVELS:
+                level_ys.setdefault("front", {})[key] = y
+
+    measures = compute_measurements(
+        views, level_ys, body_profile=profile, height_cm=height_cm,
+    )
+
+    # Prefer coloured-band widths; fall back to rectified mask widths
+    width_by_level = {**rect_widths, **band_widths}
+    final: list[LineMeasure] = []
+    for m in measures:
+        if m.level in width_by_level and m.level in _GIRTH_LEVELS:
+            w = width_by_level[m.level]
+            d = m.depth_cm
+            if m.level in band_widths:
+                src_kind = "band_tape"
+            else:
+                src_kind = f"charuco_rectified_{front_slot}"
+            if d:
+                g = ellipse_girth(w, d)
+                src = f"{src_kind}+side"
+            else:
+                g = ellipse_girth(w, 0.68 * w) if w else None
+                src = src_kind
+            final.append(
+                LineMeasure(
+                    level=m.level,
+                    y_front=m.y_front,
+                    y_side=m.y_side,
+                    y_back=m.y_back,
+                    width_cm=w,
+                    depth_cm=d,
+                    girth_cm=g,
+                    source=src,
+                )
+            )
+        else:
+            final.append(m)
+
+    if tape_cm:
+        final = apply_tape_calibration(final, tape_cm)
+
+    summary: dict[str, Any] = {
+        "method": "charuco_rectified",
+        "front_slot": front_slot,
+        "scales": {k: {"cm_per_px": v.cm_per_px, "method": v.scale_method} for k, v in views.items()},
+        "rectified_widths_cm": rect_widths,
+        "band_widths_cm": band_widths,
+        "band_width_detail": band_width_detail,
+        "rectified_band_rows": rect_bands,
+        "level_ys": level_ys,
+        "measures": [
+            {
+                "level": m.level,
+                "width_cm": m.width_cm,
+                "depth_cm": m.depth_cm,
+                "girth_cm": m.girth_cm,
+                "source": m.source,
+            }
+            for m in final
+        ],
+        "girths_cm": {m.level: m.girth_cm for m in final if m.girth_cm and m.level in _GIRTH_LEVELS},
+        "outputs": {"rectified_png": str(out_dir / f"front_{front_slot}_flat.png")} if flat else {},
+        "warnings": [w for v in views.values() for w in v.warnings],
+    }
+    save_session(out_dir / "measurement_result.json", summary)
+    return summary
+
+
 def compare_body_profiles(
     paths: dict[str, str | Path],
     height_cm: float,

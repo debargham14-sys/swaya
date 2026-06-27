@@ -166,6 +166,9 @@ def measure(
     tape_in: str | None = None,
     tape_cm: str | None = None,
     calibration_path: Path | None = None,
+    body_sex: str = "female",
+    body_build: str = "average",
+    clothing: str = "auto",
 ) -> EngineResult:
     # 1. Mesh path (4D-Humans / SMPL-X / .obj). Needs a stature: explicit height or
     # inferred from ArUco scale × front silhouette.
@@ -204,6 +207,7 @@ def measure(
     mk = markerless.estimate(
         front, side, height_cm, weight_kg, debug_dir=debug_dir,
         ref_kind=ref_kind, ref_marker_mm=ref_marker_mm, back_path=back,
+        body_sex=body_sex, body_build=body_build, clothing=clothing,
     )
     out = _from_markerless(mk, weight_kg or 0.0)
     from pipeline.measure.measurement_quality import apply_quality_gate

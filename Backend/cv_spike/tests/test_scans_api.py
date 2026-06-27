@@ -1,4 +1,4 @@
-"""Scan API tests (require MongoDB on localhost:27017)."""
+"""Scan API tests (run against in-process DynamoDB + S3 via moto)."""
 
 from __future__ import annotations
 
@@ -7,16 +7,14 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from api.db.mongo import mongo_available
+pytest.importorskip("moto")
 
 ROOT = Path(__file__).resolve().parents[1]
 REFS = ROOT / "tests" / "fixtures" / "profiles"
 
-pytestmark = pytest.mark.skipif(not mongo_available(), reason="MongoDB not running")
 
-
-@pytest.fixture(scope="module")
-def client():
+@pytest.fixture
+def client(aws_backend):
     from api.main import app
 
     return TestClient(app)

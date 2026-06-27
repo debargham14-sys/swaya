@@ -30,6 +30,24 @@
 	<string>Swaya needs the camera for body profile photos.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Swaya needs photo access to pick profile images.</string>
+	<!-- Allow the 3D try-on WebView to load the GLB from the local loopback proxy. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<!-- Google sign-in: REVERSED_CLIENT_ID from GoogleService-Info.plist -->
+				<string>com.googleusercontent.apps.221397392431-612h9ic9uv7l01d505d9jh3mlj01o52h</string>
+			</array>
+		</dict>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

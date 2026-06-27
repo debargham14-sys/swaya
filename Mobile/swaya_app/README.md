@@ -37,6 +37,20 @@ flutter create . --org com.swaya --project-name swaya_app
 <uses-permission android:name="android.permission.CAMERA"/>
 ```
 
+## Authentication (Firebase)
+
+Sign-in (phone OTP, email/password, Google, Apple) uses Firebase. The app ships
+with a **placeholder** `lib/firebase_options.dart`, so it runs without auth until
+you configure a project:
+
+```bash
+flutterfire configure --project=<your-firebase-project-id>
+flutter pub get
+```
+
+Full walkthrough (providers, SHA keys, Apple capability, backend token
+verification): **`docs/AUTH-firebase-setup.md`**.
+
 ## Run
 
 ```bash

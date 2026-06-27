@@ -119,7 +119,9 @@ class _VestScanScreenState extends State<VestScanScreen> {
   Widget build(BuildContext context) {
     return SwayaScaffold(
       title: 'Vest scan (beta)',
-      leading: BackButton(onPressed: () => context.go('/home')),
+      leading: BackButton(
+          onPressed: () =>
+              context.canPop() ? context.pop() : context.go('/home')),
       body: ListView(
         children: [
           const _BetaNote(),

@@ -14,3 +14,22 @@ Mobile/swaya_app/.flutter-plugins
 Mobile/swaya_app/.flutter-plugins-dependencies
 Mobile/swaya_app/build/
 Mobile/swaya_app/.packages
+
+# SSH private keys — never commit
+*.pem
+
+# Terraform state & vars — infra state/secrets, never commit (the *.tf source IS committed)
+*.tfstate
+*.tfstate.*
+*.tfvars
+.terraform/
+.terraform.lock.hcl
+
+# Large model archives — unpacked .pkl/.npz are tracked; zips exceed GitHub's 100MB limit
+Backend/cv_spike/models/*.zip
+
+# Local experiments (multi-GB, has its own infra state)
+experiments/
+
+# Spike/research data — contains real subject capture photos (PII)
+Backend/cv_spike/spike_data/

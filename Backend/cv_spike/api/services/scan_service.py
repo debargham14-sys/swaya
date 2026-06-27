@@ -1,4 +1,4 @@
-"""Create scans: measure, bundle, persist to MongoDB (GridFS or disk)."""
+"""Create scans: measure, bundle, persist to DynamoDB; blobs to S3 or disk."""
 
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ class ScanService:
         collector_id: str | None = None,
         consent_given: bool | None = None,
         notes: str | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         scan_id = ScanRepository.new_id()
 
@@ -89,21 +90,22 @@ class ScanService:
             bundle_filename=bundle_filename,
             photo_files={"front": front, "back": back, "side": side},
             metadata=metadata or None,
+            user_id=user_id,
         )
         doc["download_url"] = f"/v1/scans/{scan_id}/bundle"
         doc["photo_urls"] = self._photo_urls(scan_id, doc)
         return doc
 
-    def get_scan(self, scan_id: str) -> dict[str, Any] | None:
-        doc = self._repo.get_scan(scan_id)
+    def get_scan(self, scan_id: str, user_id: str | None = None) -> dict[str, Any] | None:
+        doc = self._repo.get_scan(scan_id, user_id=user_id)
         if doc:
             sid = doc.get("scan_id") or scan_id
             doc["download_url"] = f"/v1/scans/{sid}/bundle"
             doc["photo_urls"] = self._photo_urls(sid, doc)
         return doc
 
-    def list_scans(self, limit: int = 30) -> list[dict[str, Any]]:
-        items = self._repo.list_scans(limit=limit)
+    def list_scans(self, limit: int = 30, user_id: str | None = None) -> list[dict[str, Any]]:
+        items = self._repo.list_scans(limit=limit, user_id=user_id)
         for doc in items:
             sid = doc.get("scan_id")
             if sid:
@@ -111,14 +113,16 @@ class ScanService:
                 doc["photo_urls"] = self._photo_urls(sid, doc)
         return items
 
-    def open_bundle(self, scan_id: str):
-        return self._repo.open_bundle(scan_id)
+    def open_bundle(self, scan_id: str, user_id: str | None = None):
+        return self._repo.open_bundle(scan_id, user_id=user_id)
 
-    def open_photo(self, scan_id: str, view: str):
-        return self._repo.open_photo(scan_id, view)
+    def open_photo(self, scan_id: str, view: str, user_id: str | None = None):
+        return self._repo.open_photo(scan_id, view, user_id=user_id)
 
-    def save_ground_truth(self, scan_id: str, ground_truth_cm: dict[str, float]) -> dict[str, Any] | None:
-        doc = self._repo.update_ground_truth(scan_id, ground_truth_cm)
+    def save_ground_truth(
+        self, scan_id: str, ground_truth_cm: dict[str, float], user_id: str | None = None
+    ) -> dict[str, Any] | None:
+        doc = self._repo.update_ground_truth(scan_id, ground_truth_cm, user_id=user_id)
         if not doc:
             return None
         was_calibrated = bool((doc.get("measurements") or {}).get("calibration_profile"))
@@ -157,6 +161,7 @@ def process_uploaded_scan(
     collector_id: str | None = None,
     consent_given: bool | None = None,
     notes: str | None = None,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     """Convenience for API layer."""
     return ScanService().create_scan_from_paths(
@@ -173,4 +178,5 @@ def process_uploaded_scan(
         collector_id=collector_id,
         consent_given=consent_given,
         notes=notes,
+        user_id=user_id,
     )

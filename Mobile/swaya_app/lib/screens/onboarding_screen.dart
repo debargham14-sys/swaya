@@ -28,7 +28,7 @@ class OnboardingScreen extends StatelessWidget {
 
   Future<void> _continue(BuildContext context) async {
     await OnboardingStore().markComplete();
-    if (context.mounted) context.go('/home');
+    if (context.mounted) context.go('/home-v2');
   }
 
   @override

@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/app_config.dart';
 import '../models/measurement_result.dart';
+import 'auth_token.dart';
 import 'measure_api.dart';
 
 class FitSuggestion {
@@ -62,7 +63,7 @@ class AssistantApi {
     final res = await _client
         .post(
           _uri(AppConfig.assistantSuggestPath),
-          headers: {'Content-Type': 'application/json'},
+          headers: await authHeaders({'Content-Type': 'application/json'}),
           body: jsonEncode(body),
         )
         .timeout(const Duration(seconds: 60));
@@ -91,7 +92,7 @@ class AssistantApi {
     final res = await _client
         .post(
           _uri(AppConfig.assistantChatPath),
-          headers: {'Content-Type': 'application/json'},
+          headers: await authHeaders({'Content-Type': 'application/json'}),
           body: jsonEncode({
             'measurements': _measurementsPayload(measurements),
             'message': message,

@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "221397392431",
+    "project_id": "swayastudio",
+    "storage_bucket": "swayastudio.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:221397392431:android:21058019e66d44e35cfada",
+        "android_client_info": {
+          "package_name": "com.swaya.swaya_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "221397392431-9hdi1htdsans3suofmknh4kpt83cmi70.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC3JQpqJ473Gws0I_CrPZvBIWQctxvBrSE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "221397392431-9hdi1htdsans3suofmknh4kpt83cmi70.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "221397392431-612h9ic9uv7l01d505d9jh3mlj01o52h.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.swaya.swayaApp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

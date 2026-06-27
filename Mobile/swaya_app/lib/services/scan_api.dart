@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import '../models/captured_photo.dart';
 import '../models/scan_record.dart';
+import 'auth_token.dart';
 import 'measure_api.dart';
 
 class ScanApi {
@@ -55,6 +56,7 @@ class ScanApi {
     attach('back', back);
     attach('side', side);
 
+    request.headers.addAll(await authHeaders());
     final streamed = await _client.send(request).timeout(const Duration(minutes: 5));
     final body = await streamed.stream.bytesToString();
 
@@ -90,7 +92,7 @@ class ScanApi {
 
     final res = await _client.patch(
       _uri('/v1/scans/$scanId/ground-truth'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await authHeaders({'Content-Type': 'application/json'}),
       body: jsonEncode(body),
     );
     if (res.statusCode >= 200 && res.statusCode < 300) {
@@ -108,7 +110,10 @@ class ScanApi {
   }
 
   Future<ScanRecord> getScan(String scanId) async {
-    final res = await _client.get(_uri('${AppConfig.scansPath}/$scanId'));
+    final res = await _client.get(
+      _uri('${AppConfig.scansPath}/$scanId'),
+      headers: await authHeaders(),
+    );
     if (res.statusCode == 404) {
       throw MeasureApiException('Scan not found', statusCode: 404);
     }
@@ -122,7 +127,10 @@ class ScanApi {
   }
 
   Future<List<ScanRecord>> listScans({int limit = 30}) async {
-    final res = await _client.get(_uri(AppConfig.scansPath, {'limit': '$limit'}));
+    final res = await _client.get(
+      _uri(AppConfig.scansPath, {'limit': '$limit'}),
+      headers: await authHeaders(),
+    );
     if (res.statusCode != 200) {
       throw MeasureApiException('Failed to list scans (${res.statusCode})', statusCode: res.statusCode);
     }

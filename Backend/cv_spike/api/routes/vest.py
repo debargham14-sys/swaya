@@ -21,7 +21,7 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from api.db.mongo import mongo_available, mongo_last_error
+from api.db.dynamo import dynamo_available, dynamo_last_error
 from api.forms import save_upload
 from api.image_prep import prepare_vest_paths
 from api.services.vest_service import (
@@ -50,11 +50,11 @@ class VestGroundTruthIn(BaseModel):
         return {k: float(v) for k, v in self.model_dump().items() if v is not None}
 
 
-def _require_mongo() -> None:
-    if not mongo_available():
+def _require_db() -> None:
+    if not dynamo_available():
         raise HTTPException(
             status_code=503,
-            detail=f"MongoDB unavailable: {mongo_last_error() or 'connection failed'}",
+            detail=f"DynamoDB unavailable: {dynamo_last_error() or 'connection failed'}",
         )
 
 
@@ -77,7 +77,7 @@ async def create_vest_scan(
     Measure a ChArUco vest capture and store it for data collection.
 
     Returns the beta measurement (front bust/waist/hip girths + confidence +
-    warnings). Works without MongoDB (measurement only, ``stored=false``).
+    warnings). Works without DynamoDB (measurement only, ``stored=false``).
     """
     uploads = {"front": front, "back": back, "side_left": side_left, "side_right": side_right}
     gt = VestGroundTruthIn(bust_in=bust_in, waist_in=waist_in, hip_in=hip_in, height_cm=height_cm)
@@ -124,7 +124,7 @@ async def create_vest_scan(
 
 @router.get("")
 def list_scans(limit: int = 30) -> dict:
-    _require_mongo()
+    _require_db()
     return {"scans": list_vest_scans(limit=limit)}
 
 
@@ -132,7 +132,7 @@ def list_scans(limit: int = 30) -> dict:
 @router.get("/calibration")
 def get_calibration() -> dict:
     """Current factor + what re-fitting from accumulated ground truth would suggest."""
-    _require_mongo()
+    _require_db()
     from api.services.vest_calibration import recompute_calibration
 
     return recompute_calibration(apply=False)
@@ -141,7 +141,7 @@ def get_calibration() -> dict:
 @router.post("/calibration/recompute")
 def recompute_calibration_endpoint(apply: bool = False) -> dict:
     """Re-fit the calibration factor from ground-truth pairs; pass apply=true to persist it."""
-    _require_mongo()
+    _require_db()
     from api.services.vest_calibration import recompute_calibration
 
     return recompute_calibration(apply=apply)
@@ -149,7 +149,7 @@ def recompute_calibration_endpoint(apply: bool = False) -> dict:
 
 @router.get("/{scan_id}")
 def get_scan(scan_id: str) -> dict:
-    _require_mongo()
+    _require_db()
     doc = get_vest_scan(scan_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Vest scan not found")
@@ -158,7 +158,7 @@ def get_scan(scan_id: str) -> dict:
 
 @router.patch("/{scan_id}/ground-truth")
 def patch_ground_truth(scan_id: str, body: VestGroundTruthIn) -> dict:
-    _require_mongo()
+    _require_db()
     payload = body.to_dict()
     if not payload:
         raise HTTPException(status_code=422, detail="Provide at least one of bust_in/waist_in/hip_in/height_cm")

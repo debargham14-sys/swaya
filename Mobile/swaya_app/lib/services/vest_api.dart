@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import '../models/captured_photo.dart';
 import '../models/vest_measurement.dart';
+import 'auth_token.dart';
 import 'measure_api.dart' show MeasureApiException;
 
 /// Client for the ChArUco vest measurement endpoints (POST /v1/vest, beta).
@@ -59,6 +60,7 @@ class VestApi {
     attach('side_left', sideLeft);
     attach('side_right', sideRight);
 
+    request.headers.addAll(await authHeaders());
     final streamed = await _client.send(request).timeout(const Duration(minutes: 3));
     final body = await streamed.stream.bytesToString();
 
@@ -91,7 +93,7 @@ class VestApi {
 
     final res = await _client.patch(
       _uri('${AppConfig.vestScanPath}/$scanId/ground-truth'),
-      headers: {'Content-Type': 'application/json'},
+      headers: await authHeaders({'Content-Type': 'application/json'}),
       body: jsonEncode(body),
     );
     if (res.statusCode >= 200 && res.statusCode < 300) {

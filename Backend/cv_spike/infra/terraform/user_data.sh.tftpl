@@ -1,0 +1,48 @@
+#!/bin/bash
+# EC2 bootstrap: pull the prebuilt DSV API image from ECR and run it under Docker.
+# Credentials come from the instance IAM role (no static keys). The image is
+# pushed separately (see push_image.sh) — nothing is built or cloned on the box.
+# Logs: /var/log/cloud-init-output.log
+set -euxo pipefail
+
+dnf update -y
+dnf install -y docker
+systemctl enable --now docker
+
+# Amazon Linux 2023 ships AWS CLI v2. Log Docker into ECR using the instance role.
+REGISTRY="$(echo "${api_image}" | cut -d/ -f1)"
+aws ecr get-login-password --region "${aws_region}" \
+  | docker login --username AWS --password-stdin "$REGISTRY"
+
+docker pull "${api_image}"
+
+# Optional: pull the Firebase service-account JSON from SSM Parameter Store and
+# feed it to the container as FIREBASE_SERVICE_ACCOUNT_JSON via an env-file (the
+# secret is created out-of-band, so it never lands in Terraform state). env-file
+# takes the whole line after '=' literally, so single-line JSON is safe.
+EXTRA_ENV=""
+FIREBASE_PARAM="${firebase_ssm_parameter}"
+if [ -n "$FIREBASE_PARAM" ]; then
+  set +x # don't echo the secret into the cloud-init log
+  FB_JSON="$(aws ssm get-parameter --name "$FIREBASE_PARAM" --with-decryption \
+    --query Parameter.Value --output text --region "${aws_region}" | tr -d '\n')"
+  umask 077
+  printf 'FIREBASE_SERVICE_ACCOUNT_JSON=%s\n' "$FB_JSON" > /opt/swaya.env
+  unset FB_JSON
+  set -x
+  EXTRA_ENV="--env-file /opt/swaya.env"
+fi
+
+docker rm -f swaya-api 2>/dev/null || true
+docker run -d --name swaya-api --restart always -p 8000:8000 \
+  $EXTRA_ENV \
+  -e AWS_REGION="${aws_region}" \
+  -e DYNAMO_TABLE_PREFIX="${dynamo_prefix}" \
+  -e S3_BUCKET="${s3_bucket}" \
+  -e PHOTO_STORAGE=s3 \
+  -e SCAN_STORAGE_BACKEND=s3 \
+  -e S3_PHOTO_PREFIX=dsv/scans \
+  -e ENABLE_QC=0 \
+  -e AUTH_REQUIRED="${auth_required}" \
+  -e FIREBASE_PROJECT_ID="${firebase_project_id}" \
+  "${api_image}"

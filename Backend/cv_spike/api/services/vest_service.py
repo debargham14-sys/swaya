@@ -2,8 +2,8 @@
 Vest ChArUco scan service (BETA) — measure + persist for tailor data collection.
 
 Stores each capture (photos + beta measurement + optional tape ground truth) in a
-dedicated ``vest_scans`` MongoDB collection, independent of the main scan flow.
-Degrades gracefully: if MongoDB is unavailable the measurement still returns,
+dedicated ``vest_scans`` DynamoDB table, independent of the main scan flow.
+Degrades gracefully: if DynamoDB is unavailable the measurement still returns,
 just unstored.
 """
 
@@ -17,14 +17,23 @@ from typing import Any, Optional
 
 import cv2
 
-from api.db.mongo import get_db, mongo_available
+from api.db.dynamo import dynamo_available, from_item, get_table, to_item
 from api.storage.photo_store import serialize_photos, store_photos
 from pipeline.measure.vest_charuco import measure_vest_views
 
 logger = logging.getLogger(__name__)
 
-VEST_COLLECTION = "vest_scans"
+VEST_TABLE = "vest_scans"
 MM_PER_IN = 25.4
+
+
+def _strip(doc: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Public view of a vest record: plain Python, without the stored photos blob."""
+    if not doc:
+        return None
+    out = from_item(doc)
+    out.pop("photos", None)
+    return out
 
 
 def _new_scan_id() -> str:
@@ -70,12 +79,12 @@ def process_vest_scan(
         "stored": False,
     }
 
-    if mongo_available():
+    if dynamo_available():
         try:
             present = {k: v for k, v in paths.items() if v and Path(v).is_file()}
             photos = store_photos(scan_id, present)
             record = {**doc, "photos": photos}
-            get_db()[VEST_COLLECTION].insert_one(record)
+            get_table(VEST_TABLE).put_item(Item=to_item(record))
             doc["photos"] = serialize_photos(photos)
             doc["stored"] = True
         except Exception as exc:  # noqa: BLE001
@@ -86,26 +95,41 @@ def process_vest_scan(
 
 
 def list_vest_scans(limit: int = 30) -> list[dict[str, Any]]:
-    cur = (
-        get_db()[VEST_COLLECTION]
-        .find({}, {"_id": 0, "photos": 0})
-        .sort("created_at", -1)
-        .limit(max(1, min(limit, 200)))
-    )
-    return list(cur)
+    # Low-volume beta: full scan + in-app sort. TODO: GSI on created_at before scaling.
+    table = get_table(VEST_TABLE)
+    items: list[dict[str, Any]] = []
+    resp = table.scan()
+    items.extend(resp.get("Items", []))
+    while "LastEvaluatedKey" in resp:
+        resp = table.scan(ExclusiveStartKey=resp["LastEvaluatedKey"])
+        items.extend(resp.get("Items", []))
+    docs = [_strip(it) for it in items]
+    docs.sort(key=lambda d: d.get("created_at") or "", reverse=True)
+    return docs[: max(1, min(limit, 200))]
 
 
 def get_vest_scan(scan_id: str) -> dict[str, Any] | None:
-    return get_db()[VEST_COLLECTION].find_one({"scan_id": scan_id}, {"_id": 0, "photos": 0})
+    item = get_table(VEST_TABLE).get_item(Key={"scan_id": scan_id}).get("Item")
+    return _strip(item)
 
 
 def save_vest_ground_truth(scan_id: str, ground_truth_in: dict[str, float]) -> dict[str, Any] | None:
-    """Attach tape-measured girths (inches) to a stored scan for calibration."""
-    from pymongo import ReturnDocument
+    """Attach tape-measured girths (inches) to a stored scan for calibration.
 
-    return get_db()[VEST_COLLECTION].find_one_and_update(
-        {"scan_id": scan_id},
-        {"$set": {"ground_truth_in": ground_truth_in}},
-        projection={"_id": 0, "photos": 0},
-        return_document=ReturnDocument.AFTER,
-    )
+    Returns None when no such scan exists (the conditional update fails).
+    """
+    from botocore.exceptions import ClientError
+
+    try:
+        resp = get_table(VEST_TABLE).update_item(
+            Key={"scan_id": scan_id},
+            UpdateExpression="SET ground_truth_in = :gt",
+            ExpressionAttributeValues=to_item({":gt": ground_truth_in}),
+            ConditionExpression="attribute_exists(scan_id)",
+            ReturnValues="ALL_NEW",
+        )
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return None
+        raise
+    return _strip(resp.get("Attributes"))

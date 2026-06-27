@@ -17,6 +17,14 @@ dependencies:
   provider: ^6.1.2
   shared_preferences: ^2.3.3
   url_launcher: ^6.3.1
+  # 3D avatar / garment try-on (renders GLB in a WebView via <model-viewer>)
+  model_viewer_plus: ^1.10.0
+  webview_flutter: ^4.14.0 # mobile recolour: run JS in the model-viewer WebView
+  web: ^1.1.1 # web recolour: reach the <model-viewer> element via js_interop
+  # Authentication (Firebase)
+  firebase_core: ^3.8.0
+  firebase_auth: ^5.3.4
+  google_sign_in: ^6.2.2
 
 dev_dependencies:
   flutter_test:
@@ -25,3 +33,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/models/

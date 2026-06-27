@@ -10,7 +10,7 @@ class WelcomeScreen extends StatelessWidget {
   Future<void> _start(BuildContext context) async {
     final done = await OnboardingStore().isComplete();
     if (!context.mounted) return;
-    context.go(done ? '/home' : '/onboarding');
+    context.go(done ? '/home-v2' : '/onboarding');
   }
 
   @override

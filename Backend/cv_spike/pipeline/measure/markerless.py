@@ -444,6 +444,9 @@ def estimate(
     ref_kind: str | None = None,
     ref_marker_mm: float = 50.0,
     back_path: str | Path | None = None,
+    body_sex: str = "female",
+    body_build: str = "average",
+    clothing: str = "auto",
 ) -> MarkerlessResult:
     """
     Estimate body girths.
@@ -518,12 +521,26 @@ def estimate(
         res.warnings.append("pose_not_detected_slice_sweep_degraded")
 
     side_pv = next((p for p in profiles if p.label == "side"), None)
-    from pipeline.measure.slice_measure import estimate_torso_girths
+    from pipeline.measure.body_profile import (
+        BodyProfile,
+        CaptureHints,
+        estimate_torso_girths_profiled,
+    )
+    from pipeline.measure.scale_reference import detect_scale
+
+    dsv_aruco = detect_scale(front, "aruco", 18.0)
+    hints = CaptureHints(
+        has_dsv_aruco=bool(dsv_aruco.cm_per_px),
+        mask_bottom_px=fb,
+        pose=fpose,
+    )
+    profile = BodyProfile(sex=body_sex, build=body_build, clothing=clothing)
 
     _ts = time.perf_counter()
-    logger.info("measure: torso slice sweep start")
-    samples, girth_levels, sweep_warn = estimate_torso_girths(
+    logger.info("measure: torso slice sweep start (body_profile=%s/%s)", body_sex, body_build)
+    samples, girth_levels, sweep_warn = estimate_torso_girths_profiled(
         fmask, fpose, fcx, res.cm_per_px_front, side_pv, res.cm_per_px_side,
+        profile=profile, hints=hints, height_cm=height_cm, weight_kg=weight_kg,
     )
     logger.info("measure: slice sweep done in %.1fs (%d levels)", time.perf_counter() - _ts, len(girth_levels))
     res.warnings.extend(sweep_warn)

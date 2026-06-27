@@ -8,6 +8,7 @@ class Persona {
     required this.id,
     required this.name,
     this.label,
+    this.gender = 'female',
     BlouseMeasurements? measurements,
     this.updatedAtIso,
   }) : measurements = measurements ?? BlouseMeasurements();
@@ -15,6 +16,10 @@ class Persona {
   final String id;
   final String name;
   final String? label;
+
+  /// `'female'` or `'male'` — drives the garment catalog and avatar model.
+  /// Defaults to female (the original blouse-only flow) for legacy personas.
+  final String gender;
   final BlouseMeasurements measurements;
   final String? updatedAtIso;
 
@@ -23,6 +28,7 @@ class Persona {
   Persona copyWith({
     String? name,
     String? label,
+    String? gender,
     BlouseMeasurements? measurements,
     String? updatedAtIso,
   }) {
@@ -30,6 +36,7 @@ class Persona {
       id: id,
       name: name ?? this.name,
       label: label ?? this.label,
+      gender: gender ?? this.gender,
       measurements: measurements ?? this.measurements,
       updatedAtIso: updatedAtIso ?? this.updatedAtIso,
     );
@@ -39,6 +46,7 @@ class Persona {
         'id': id,
         'name': name,
         if (label != null) 'label': label,
+        'gender': gender,
         'measurements': measurements.toJson(),
         if (updatedAtIso != null) 'updated_at': updatedAtIso,
       };
@@ -47,6 +55,7 @@ class Persona {
         id: json['id'] as String,
         name: json['name'] as String? ?? 'Unnamed',
         label: json['label'] as String?,
+        gender: (json['gender'] as String?) ?? 'female',
         measurements: BlouseMeasurements.fromJson(
             (json['measurements'] as Map?)?.cast<String, dynamic>() ?? {}),
         updatedAtIso: json['updated_at'] as String?,

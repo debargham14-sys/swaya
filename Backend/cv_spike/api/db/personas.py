@@ -25,6 +25,8 @@ def _to_client(doc: dict[str, Any]) -> dict[str, Any]:
         "id": doc.get("persona_id"),
         "name": doc.get("name"),
         "label": doc.get("label"),
+        # Pre-gender personas default to female (the original blouse-only flow).
+        "gender": doc.get("gender") or "female",
         "measurements": doc.get("measurements", {}),
         "updated_at": doc.get("updated_at"),
     }
@@ -65,6 +67,7 @@ class PersonaRepository:
         *,
         name: str,
         label: str | None,
+        gender: str = "female",
         measurements: dict[str, float],
     ) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
@@ -74,6 +77,7 @@ class PersonaRepository:
             "user_id": user_id,
             "name": name,
             "label": label,
+            "gender": gender or "female",
             "measurements": measurements or {},
             "created_at": (existing or {}).get("created_at", now),
             "updated_at": now,

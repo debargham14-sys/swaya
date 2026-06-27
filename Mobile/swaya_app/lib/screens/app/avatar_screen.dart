@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
 
+import '../../models/blouse_measurements.dart';
 import '../../theme/swaya_light_theme.dart';
 import '../../widgets/avatar/garment_recolor.dart';
 import 'app_chrome.dart';
@@ -10,12 +11,34 @@ import 'app_chrome.dart';
 /// 3D Try-On — a static SMPL-X avatar (female / male) with live garment
 /// recolour + add-ons, rendered from a baked GLB inside `<model-viewer>`.
 ///
+/// Reachable two ways: standalone from Home, or after entering/taking
+/// measurements with [gender] + [measurements] passed in so the user can check
+/// the result on an avatar. Today the body is a generic per-gender GLB; the
+/// [_srcFor] seam is the single place to swap in a measurement-driven mesh
+/// later (see the doc on that function).
+///
 /// Jitter-free by construction: the GLB loads ONCE and is never re-fetched while
 /// you customise. Recolour / show / hide are direct GPU material edits on the
 /// loaded model (see [GarmentRecolor]). Switching gender swaps to a different
 /// baked GLB (a deliberate reload), then re-applies the current state.
 class AvatarScreen extends StatefulWidget {
-  const AvatarScreen({super.key});
+  const AvatarScreen({
+    super.key,
+    this.gender,
+    this.measurements,
+    this.garmentId,
+  });
+
+  /// Initial gender ('female' / 'male'); null falls back to female.
+  final String? gender;
+
+  /// Optional measurements to preview on the avatar (shown as a summary now;
+  /// will drive mesh generation once a measurement-driven backend is wired).
+  final BlouseMeasurements? measurements;
+
+  /// Optional garment the avatar is being previewed for (reserved for the
+  /// measurement-driven path).
+  final String? garmentId;
 
   @override
   State<AvatarScreen> createState() => _AvatarScreenState();
@@ -40,12 +63,18 @@ const List<_Swatch> _palette = [
 const int _watchR = 30, _watchG = 32, _watchB = 38; // dark metal
 const int _pantsR = 58, _pantsG = 66, _pantsB = 96; // denim slate
 
-String _srcFor(String gender) => 'assets/models/body_shirt_$gender.glb';
+/// The avatar's GLB source. **Swap-later seam:** today this returns a static
+/// per-gender baked model. To make the avatar reflect the person's actual
+/// measurements, return a generated/fetched GLB URL here (e.g. an SMPL/SMPL-X
+/// mesh produced by the backend from [measurements]) — nothing else in this
+/// screen needs to change.
+String _srcFor(String gender, BlouseMeasurements? measurements) =>
+    'assets/models/body_shirt_$gender.glb';
 
 class _AvatarScreenState extends State<AvatarScreen> {
   final GarmentRecolor _recolor = GarmentRecolor();
 
-  String _gender = 'female';
+  late String _gender = widget.gender ?? 'female';
   int _color = 0;
   bool _sleeves = false;
   bool _watch = false;
@@ -59,7 +88,7 @@ class _AvatarScreenState extends State<AvatarScreen> {
 
   Widget _buildViewer() => ModelViewer(
         key: ValueKey('glb-$_gender'),
-        src: _srcFor(_gender),
+        src: _srcFor(_gender, widget.measurements),
         alt: 'Swaya SMPL-X avatar ($_gender) with customisable garments',
         backgroundColor: SwayaLight.surface,
         cameraControls: true,
@@ -172,6 +201,11 @@ class _AvatarScreenState extends State<AvatarScreen> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
             child: Column(
               children: [
+                if (widget.measurements != null &&
+                    widget.measurements!.values.isNotEmpty) ...[
+                  _MeasurementSummary(measurements: widget.measurements!),
+                  const SizedBox(height: 14),
+                ],
                 _Segmented(
                   options: const ['female', 'male'],
                   labels: const ['Female', 'Male'],
@@ -217,6 +251,67 @@ class _AvatarScreenState extends State<AvatarScreen> {
       ),
     );
   }
+}
+
+/// Compact read-out of the measurements being previewed on the avatar. Static
+/// for now (the GLB is generic per gender); it documents what a future
+/// measurement-driven mesh would be built from.
+class _MeasurementSummary extends StatelessWidget {
+  const _MeasurementSummary({required this.measurements});
+
+  final BlouseMeasurements measurements;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = measurements.values.entries.take(4).toList();
+    final more = measurements.values.length - entries.length;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: SwayaLight.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: SwayaLight.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.straighten, size: 16, color: SwayaLight.accent),
+              SizedBox(width: 8),
+              Text('Previewing your measurements',
+                  style: TextStyle(
+                      color: SwayaLight.inkPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 14,
+            runSpacing: 4,
+            children: [
+              for (final e in entries)
+                Text('${_pretty(e.key)} ${e.value.toStringAsFixed(0)}cm',
+                    style: const TextStyle(
+                        color: SwayaLight.inkSecondary, fontSize: 12)),
+              if (more > 0)
+                Text('+$more more',
+                    style: const TextStyle(
+                        color: SwayaLight.inkTertiary, fontSize: 12)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _pretty(String key) =>
+      key.replaceAll('_', ' ').replaceAllMapped(
+            RegExp(r'^\w'),
+            (m) => m.group(0)!.toUpperCase(),
+          );
 }
 
 class _Segmented extends StatelessWidget {

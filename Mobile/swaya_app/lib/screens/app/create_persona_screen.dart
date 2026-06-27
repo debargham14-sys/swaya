@@ -21,6 +21,7 @@ class CreatePersonaScreen extends StatefulWidget {
 class _CreatePersonaScreenState extends State<CreatePersonaScreen> {
   final _name = TextEditingController();
   String? _label;
+  String _gender = 'female';
   bool _saving = false;
 
   @override
@@ -47,10 +48,11 @@ class _CreatePersonaScreenState extends State<CreatePersonaScreen> {
       id: PersonaStore.newId(),
       name: name,
       label: _label,
+      gender: _gender,
       measurements: draft.measurements.copy(),
     ));
     if (!mounted) return;
-    context.go('/measure/saved', extra: name);
+    context.go('/measure/saved', extra: {'name': name, 'gender': _gender});
   }
 
   @override
@@ -122,6 +124,25 @@ class _CreatePersonaScreenState extends State<CreatePersonaScreen> {
                       _name.text = label;
                     }
                   }),
+                ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          const Text('Gender',
+              style: TextStyle(
+                  color: SwayaLight.inkPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final g in const ['female', 'male'])
+                _LabelChip(
+                  label: g[0].toUpperCase() + g.substring(1),
+                  selected: _gender == g,
+                  onTap: () => setState(() => _gender = g),
                 ),
             ],
           ),

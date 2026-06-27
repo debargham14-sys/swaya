@@ -26,6 +26,7 @@ class TrackingStep(BaseModel):
 
 
 class OrderBody(BaseModel):
+    garment: str = "Blouse"  # the garment type ordered (gender-appropriate label)
     category: str = "active"  # active | delivered | alterations | cancelled
     status: str = "processing"  # processing | shipped | delivered | cancelled
     placed_on: str | None = None

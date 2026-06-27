@@ -43,6 +43,7 @@ class PersonasApi {
           body: jsonEncode({
             'name': persona.name,
             'label': persona.label,
+            'gender': persona.gender,
             'measurements': persona.measurements.toJson(),
           }),
         )

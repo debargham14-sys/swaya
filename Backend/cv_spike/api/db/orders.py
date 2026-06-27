@@ -20,6 +20,7 @@ from boto3.dynamodb.conditions import Attr
 from api.db.dynamo import from_item, get_table, to_item
 
 _CLIENT_FIELDS = (
+    "garment",
     "category",
     "status",
     "placed_on",
@@ -100,8 +101,11 @@ class OrderRepository:
             "updated_at": now,
             **{k: fields.get(k) for k in _CLIENT_FIELDS if k != "updated_at"},
         }
-        doc.setdefault("category", "active")
-        doc.setdefault("status", "processing")
+        # _CLIENT_FIELDS pulls these in as None when omitted, so setdefault
+        # won't help — coalesce explicitly.
+        doc["garment"] = doc.get("garment") or "Blouse"
+        doc["category"] = doc.get("category") or "active"
+        doc["status"] = doc.get("status") or "processing"
         return self._put(doc)
 
     def upsert(
@@ -146,6 +150,7 @@ class OrderRepository:
             "user_id": user_id,
             "created_at": now,
             "updated_at": now,
+            "garment": src.get("garment", "Blouse"),
             "category": "alterations",
             "status": "processing",
             "placed_on": src.get("placed_on"),

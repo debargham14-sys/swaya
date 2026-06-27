@@ -25,6 +25,8 @@ class SuggestRequest(BaseModel):
     measurements: MeasurementsContext
     calibrated: bool = False
     context: Optional[str] = None
+    gender: str = "female"
+    garment: Optional[str] = None
 
 
 class ChatMessage(BaseModel):
@@ -36,6 +38,8 @@ class ChatRequest(BaseModel):
     measurements: MeasurementsContext
     message: str = Field(..., min_length=1, max_length=2000)
     history: List[ChatMessage] = Field(default_factory=list)
+    gender: str = "female"
+    garment: Optional[str] = None
 
 
 @router.get("/status")
@@ -49,6 +53,8 @@ async def suggest(body: SuggestRequest) -> dict[str, Any]:
         body.measurements.model_dump(exclude_none=True),
         calibrated=body.calibrated,
         context=body.context,
+        gender=body.gender,
+        garment=body.garment,
     )
 
 
@@ -59,4 +65,6 @@ async def chat(body: ChatRequest) -> dict[str, Any]:
         body.measurements.model_dump(exclude_none=True),
         body.message,
         history=hist,
+        gender=body.gender,
+        garment=body.garment,
     )

@@ -31,6 +31,7 @@ class OrdersApi {
 
   /// Places a new active order (status Processing) and returns it.
   Future<BlouseOrder> createOrder({
+    String garment = 'Blouse',
     String? placedOn,
     String? estimatedDate,
     String? location,
@@ -45,6 +46,7 @@ class OrdersApi {
           _uri(AppConfig.ordersPath),
           headers: await authHeaders({'Content-Type': 'application/json'}),
           body: jsonEncode({
+            'garment': garment,
             'category': 'active',
             'status': 'processing',
             'placed_on': placedOn,

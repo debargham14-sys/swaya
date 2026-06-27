@@ -309,7 +309,7 @@ class _OrderList extends StatelessWidget {
   }
 
   String _countLine(OrderTab tab, int n) => switch (tab) {
-        OrderTab.active => 'You have $n active blouse ${_plural(n, 'order')}.',
+        OrderTab.active => 'You have $n active garment ${_plural(n, 'order')}.',
         OrderTab.delivered =>
           '$n ${_plural(n, 'order')} delivered successfully.',
         OrderTab.alterations =>
@@ -376,7 +376,7 @@ class _OrderCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          const _BlouseThumb(),
+          _GarmentThumb(garment: order.garment),
           if (order.noteTitle != null) ...[
             const SizedBox(height: 14),
             _NoteBox(title: order.noteTitle!, body: order.noteBody ?? ''),
@@ -445,8 +445,10 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
-class _BlouseThumb extends StatelessWidget {
-  const _BlouseThumb();
+class _GarmentThumb extends StatelessWidget {
+  const _GarmentThumb({required this.garment});
+
+  final String garment;
 
   @override
   Widget build(BuildContext context) {
@@ -457,13 +459,13 @@ class _BlouseThumb extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       ),
       alignment: Alignment.center,
-      child: const Row(
+      child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.checkroom, size: 18, color: SwayaLight.inkTertiary),
-          SizedBox(width: 8),
-          Text('Blouse Details',
-              style: TextStyle(
+          const Icon(Icons.checkroom, size: 18, color: SwayaLight.inkTertiary),
+          const SizedBox(width: 8),
+          Text('$garment Details',
+              style: const TextStyle(
                   color: SwayaLight.inkSecondary,
                   fontSize: 13,
                   fontWeight: FontWeight.w600)),
@@ -714,8 +716,8 @@ class _EmptyState extends StatelessWidget {
             icon: Icons.add,
             title: 'No active orders yet',
             body:
-                'Place a blouse order and track every step here — design, measurements, production and delivery.',
-            cta: 'Design & Order Blouse',
+                'Place a garment order and track every step here — design, measurements, production and delivery.',
+            cta: 'Design & Order',
             route: '/measure',
             rows: [
               (
@@ -729,8 +731,8 @@ class _EmptyState extends StatelessWidget {
             icon: Icons.local_shipping_outlined,
             title: 'No delivered orders yet',
             body:
-                'Your completed blouse orders will appear here after delivery.',
-            cta: 'Design & Order Blouse',
+                'Your completed garment orders will appear here after delivery.',
+            cta: 'Design & Order',
             route: '/measure',
             rows: [
               (
@@ -740,8 +742,8 @@ class _EmptyState extends StatelessWidget {
               ),
               (
                 icon: Icons.add_circle_outline,
-                title: 'Start a new blouse design',
-                sub: 'Create your next custom blouse.'
+                title: 'Start a new design',
+                sub: 'Create your next custom garment.'
               ),
             ],
           ),

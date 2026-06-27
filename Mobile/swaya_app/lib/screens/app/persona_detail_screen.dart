@@ -1,34 +1,85 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../models/blouse_measurements.dart';
+import '../../models/garment_catalog.dart';
 import '../../models/persona.dart';
 import '../../services/order_actions.dart';
 import '../../theme/swaya_light_theme.dart';
+import '../../widgets/garment_suggestion_sheet.dart';
 import 'app_chrome.dart';
 
 /// Persona detail — opens when a saved persona is tapped. Shows the persona's
-/// blouse measurements and an "Order this Blouse" action.
+/// measurements and gender-aware "Order garment" / "Suggest" / "View on avatar"
+/// actions.
 class PersonaDetailScreen extends StatelessWidget {
   const PersonaDetailScreen({super.key, required this.persona});
 
   final Persona persona;
 
+  Future<void> _orderGarment(BuildContext context) async {
+    final garment = await showGarmentPicker(context, persona.gender);
+    if (garment == null || !context.mounted) return;
+    await placeGarmentOrder(context,
+        personaName: persona.name, garment: garment.label);
+  }
+
   @override
   Widget build(BuildContext context) {
     final m = persona.measurements;
-    final filled = kBlouseFields.where((f) => m[f.key] != null).toList();
+    // Show the persona's saved measurements, labelled from the gender's catalog.
+    final allFields = {
+      for (final g in garmentsForGender(persona.gender))
+        for (final f in g.fields) f.key: f,
+    };
+    final filled = m.values.keys
+        .map((k) => allFields[k])
+        .whereType<MeasurementField>()
+        .toList();
 
     return LightScaffold(
       title: persona.name,
       showBack: true,
       showNav: false,
-      bottomBar: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: () => placeBlouseOrder(context, personaName: persona.name),
-          icon: const Icon(Icons.shopping_bag_outlined, size: 20),
-          label: const Text('Order this Blouse'),
-        ),
+      bottomBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => showGarmentSuggestions(
+                    context,
+                    gender: persona.gender,
+                    measurements: persona.measurements,
+                  ),
+                  icon: const Icon(Icons.auto_awesome, size: 18),
+                  label: const Text('Suggest'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => context.push('/avatar', extra: {
+                    'gender': persona.gender,
+                    'measurements': persona.measurements,
+                  }),
+                  icon: const Icon(Icons.view_in_ar_outlined, size: 18),
+                  label: const Text('Avatar'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _orderGarment(context),
+              icon: const Icon(Icons.shopping_bag_outlined, size: 20),
+              label: const Text('Order garment'),
+            ),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),

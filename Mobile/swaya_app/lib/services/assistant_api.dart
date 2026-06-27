@@ -53,13 +53,33 @@ class AssistantApi {
     required MeasurementResult measurements,
     bool calibrated = false,
     String? context,
+    String gender = 'female',
+    String? garment,
   }) async {
-    final body = <String, dynamic>{
+    return _postSuggest({
       'measurements': _measurementsPayload(measurements),
       'calibrated': calibrated,
       if (context != null) 'context': context,
-    };
+      'gender': gender,
+      if (garment != null) 'garment': garment,
+    });
+  }
 
+  /// Suggestions for a saved persona, whose measurements are a raw {key -> cm}
+  /// girth map (not a [MeasurementResult]). Used by the design/order flow.
+  Future<FitSuggestion> suggestForGarment({
+    required Map<String, double> girthsCm,
+    String gender = 'female',
+    String? garment,
+  }) async {
+    return _postSuggest({
+      'measurements': {'girths_cm': girthsCm, 'girths_in': const {}},
+      'gender': gender,
+      if (garment != null) 'garment': garment,
+    });
+  }
+
+  Future<FitSuggestion> _postSuggest(Map<String, dynamic> body) async {
     final res = await _client
         .post(
           _uri(AppConfig.assistantSuggestPath),
@@ -88,6 +108,8 @@ class AssistantApi {
     required MeasurementResult measurements,
     required String message,
     List<Map<String, String>> history = const [],
+    String gender = 'female',
+    String? garment,
   }) async {
     final res = await _client
         .post(
@@ -97,6 +119,8 @@ class AssistantApi {
             'measurements': _measurementsPayload(measurements),
             'message': message,
             'history': history,
+            'gender': gender,
+            if (garment != null) 'garment': garment,
           }),
         )
         .timeout(const Duration(seconds: 60));

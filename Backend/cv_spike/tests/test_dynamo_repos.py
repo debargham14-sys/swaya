@@ -158,6 +158,42 @@ def test_vest_persist_and_ground_truth(aws_backend, monkeypatch):
     assert any(s["scan_id"] == sid for s in vest.list_vest_scans())
 
 
+def test_persona_gender_roundtrip(aws_backend):
+    from api.db.personas import PersonaRepository
+
+    repo = PersonaRepository()
+    male = repo.upsert(
+        "user-1", "p_male", name="Dad", label="Father",
+        gender="male", measurements={"chest": 100.0},
+    )
+    assert male["gender"] == "male"
+
+    female = repo.upsert(
+        "user-1", "p_fem", name="Me", label="Me", measurements={"bust": 90.0},
+    )
+    assert female["gender"] == "female"  # default
+
+    # round-trips through storage + ownership scoping
+    listed = {p["id"]: p for p in repo.list("user-1")}
+    assert listed["p_male"]["gender"] == "male"
+    assert listed["p_fem"]["gender"] == "female"
+
+
+def test_order_garment_roundtrip(aws_backend):
+    from api.db.orders import OrderRepository
+
+    repo = OrderRepository()
+    made = repo.create("user-1", {"garment": "Sherwani", "category": "active"})
+    assert made["garment"] == "Sherwani"
+
+    # default garment when omitted (back-compat with pre-garment orders)
+    plain = repo.create("user-1", {"category": "active"})
+    assert plain["garment"] == "Blouse"
+
+    got = repo.get("user-1", made["id"])
+    assert got["garment"] == "Sherwani"
+
+
 def test_scan_roundtrip_s3_blobs(aws_backend, monkeypatch, tmp_path):
     """Same flow as disk, but blobs go to S3 (the production path)."""
     import boto3

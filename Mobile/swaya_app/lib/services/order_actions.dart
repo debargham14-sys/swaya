@@ -10,11 +10,13 @@ const _months = [
 
 String _fmtDate(DateTime d) => '${d.day} ${_months[d.month - 1]} ${d.year}';
 
-/// Places a blouse order for the given persona's measurements, shows feedback,
-/// and routes to the Orders tab where the new active order appears.
-Future<void> placeBlouseOrder(
+/// Places a garment order for the given persona's measurements, shows feedback,
+/// and routes to the Orders tab where the new active order appears. [garment]
+/// is the garment-type label (defaults to "Blouse" for back-compat).
+Future<void> placeGarmentOrder(
   BuildContext context, {
   String? personaName,
+  String garment = 'Blouse',
   OrdersApi? api,
 }) async {
   final messenger = ScaffoldMessenger.of(context);
@@ -22,9 +24,10 @@ Future<void> placeBlouseOrder(
   try {
     final now = DateTime.now();
     await (api ?? OrdersApi()).createOrder(
+      garment: garment,
       placedOn: _fmtDate(now),
       estimatedDate: _fmtDate(now.add(const Duration(days: 14))),
-      noteTitle: personaName != null ? 'For $personaName' : 'Custom blouse',
+      noteTitle: personaName != null ? '$garment for $personaName' : 'Custom $garment',
       noteBody: 'Tailored from your saved measurements.',
     );
     messenger.hideCurrentSnackBar();

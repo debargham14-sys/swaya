@@ -21,8 +21,8 @@ extension OrderTabX on OrderTab {
       };
 
   String get subtitle => switch (this) {
-        OrderTab.active => 'Track active blouse orders from design to delivery.',
-        OrderTab.delivered => 'Completed blouse orders appear here.',
+        OrderTab.active => 'Track active garment orders from design to delivery.',
+        OrderTab.delivered => 'Completed garment orders appear here.',
         OrderTab.alterations =>
           'Track requested fit changes and completion status.',
         OrderTab.cancelled => 'Cancelled and refunded orders appear here.',
@@ -68,6 +68,7 @@ class TrackingStep {
 class BlouseOrder {
   const BlouseOrder({
     required this.id,
+    this.garment = 'Blouse',
     required this.tab,
     required this.placedOn,
     required this.status,
@@ -84,6 +85,7 @@ class BlouseOrder {
   });
 
   final String id; // e.g. SW-2024-001
+  final String garment; // garment-type label, e.g. Blouse / Sherwani
   final OrderTab tab; // which tab/category it shows under
   final String placedOn; // e.g. 1 Jun 2026
   final OrderStatus status;
@@ -103,6 +105,7 @@ class BlouseOrder {
   final String? noteBody; // e.g. Make it looser at the waist by 2 inches.
 
   BlouseOrder copyWith({
+    String? garment,
     OrderTab? tab,
     OrderStatus? status,
     String? noteTitle,
@@ -111,6 +114,7 @@ class BlouseOrder {
   }) {
     return BlouseOrder(
       id: id,
+      garment: garment ?? this.garment,
       tab: tab ?? this.tab,
       placedOn: placedOn,
       status: status ?? this.status,
@@ -129,6 +133,7 @@ class BlouseOrder {
 
   factory BlouseOrder.fromJson(Map<String, dynamic> j) => BlouseOrder(
         id: j['id'] as String? ?? '',
+        garment: j['garment'] as String? ?? 'Blouse',
         tab: orderTabFromName(j['category'] as String?),
         status: orderStatusFromName(j['status'] as String?),
         placedOn: j['placed_on'] as String? ?? '',

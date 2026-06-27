@@ -23,7 +23,8 @@ def _require_db() -> None:
 class PersonaBody(BaseModel):
     name: str
     label: str | None = None
-    # field-key -> centimetres (kBlouseFields on the app side).
+    gender: str = "female"  # female | male — drives the garment catalog
+    # field-key -> centimetres (the garment's measurement fields on the app side).
     measurements: dict[str, float] = Field(default_factory=dict)
 
 
@@ -45,6 +46,7 @@ def upsert_persona(
         persona_id,
         name=body.name,
         label=body.label,
+        gender=body.gender,
         measurements=body.measurements,
     )
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../models/blouse_measurements.dart';
 import '../models/measurement_result.dart';
 import '../providers/auth_controller.dart';
 import '../screens/auth/login_screen.dart';
@@ -105,7 +106,17 @@ GoRouter createAppRouter(AuthController auth) {
       ),
       GoRoute(
         path: '/avatar',
-        builder: (context, state) => const AvatarScreen(),
+        builder: (context, state) {
+          final extra = state.extra;
+          if (extra is Map) {
+            return AvatarScreen(
+              gender: extra['gender'] as String?,
+              measurements: extra['measurements'] as BlouseMeasurements?,
+              garmentId: extra['garment'] as String?,
+            );
+          }
+          return const AvatarScreen();
+        },
       ),
       GoRoute(
         path: '/measure/manual',
@@ -125,8 +136,17 @@ GoRouter createAppRouter(AuthController auth) {
       ),
       GoRoute(
         path: '/measure/saved',
-        builder: (context, state) =>
-            PersonaSavedScreen(personaName: state.extra as String?),
+        builder: (context, state) {
+          final extra = state.extra;
+          if (extra is Map) {
+            return PersonaSavedScreen(
+              personaName: extra['name'] as String?,
+              gender: extra['gender'] as String? ?? 'female',
+            );
+          }
+          // Back-compat: older callers passed just the name string.
+          return PersonaSavedScreen(personaName: extra as String?);
+        },
       ),
       GoRoute(
         path: '/persona',

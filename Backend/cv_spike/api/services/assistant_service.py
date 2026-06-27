@@ -12,14 +12,36 @@ import httpx
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 
-_SUGGEST_SYSTEM = """You are a fit assistant for Indian tailoring and ready-to-wear.
-Given body girth measurements in cm, suggest 2–3 specific garment types (blouse, kurta, lehenga, saree blouse, etc.)
-with practical cutting/ease notes for a tailor or shopper.
-Be concise (under 180 words). Use bullet points. Mention cm values from the scan.
-If measurements look incomplete, say what else is needed."""
+# Gender-appropriate garment vocabularies used to steer the LLM and the
+# rule-based fallback. Female is the original India-centric set; male adds
+# kurta/shirt/sherwani/etc. so male personas aren't pushed into a blouse.
+_GARMENTS_BY_GENDER = {
+    "female": ["blouse", "saree blouse", "kurta", "lehenga", "salwar suit", "dress"],
+    "male": ["kurta", "shirt", "sherwani", "nehru jacket", "trousers"],
+}
+
+
+def _suggest_system(gender: str, garment: str | None) -> str:
+    gender = (gender or "female").lower()
+    garments = ", ".join(_GARMENTS_BY_GENDER.get(gender, _GARMENTS_BY_GENDER["female"]))
+    focus = (
+        f"The user is designing a {garment}, so lead with that garment.\n"
+        if garment
+        else ""
+    )
+    return (
+        "You are a fit assistant for Indian tailoring and ready-to-wear.\n"
+        f"The wearer is {gender}. Only suggest garments appropriate for them, "
+        f"choosing from: {garments}.\n"
+        f"{focus}"
+        "Given body girth measurements in cm, suggest 2–3 specific garment types "
+        "with practical cutting/ease notes for a tailor or shopper.\n"
+        "Be concise (under 180 words). Use bullet points. Mention cm values from the scan.\n"
+        "If measurements look incomplete, say what else is needed."
+    )
 
 
 def llm_available() -> bool:
@@ -38,9 +60,12 @@ def _fmt_measurements(m: dict[str, Any]) -> str:
     return ", ".join(parts) if parts else "no girths available"
 
 
-def _rule_suggest(measurements: dict[str, Any], *, calibrated: bool) -> dict[str, Any]:
+def _rule_suggest(
+    measurements: dict[str, Any], *, calibrated: bool, gender: str = "female"
+) -> dict[str, Any]:
+    gender = (gender or "female").lower()
     g = measurements.get("girths_cm") or {}
-    bust = g.get("bust")
+    chest = g.get("bust") if gender == "female" else (g.get("chest") or g.get("bust"))
     waist = g.get("waist")
     hip = g.get("hip")
     lines: list[str] = []
@@ -48,36 +73,50 @@ def _rule_suggest(measurements: dict[str, Any], *, calibrated: bool) -> dict[str
     if calibrated:
         lines.append("Measurements were recalibrated with your tape values — suggestions below use the updated numbers.")
 
-    if bust is not None:
-        ease_lo = round(bust + 5)
-        ease_hi = round(bust + 8)
-        lines.append(
-            f"• Fitted blouse / saree blouse: cut bust {ease_lo}–{ease_hi} cm "
-            f"(5–8 cm ease over {bust:.1f} cm)."
-        )
-        lines.append(
-            f"• Structured kurta: bust panel ~{round(bust + 10)} cm for comfortable movement."
-        )
-
-    if waist is not None:
-        lines.append(
-            f"• High-waist lehenga / skirt: waist {waist:.1f} cm — add 2–3 cm ease for sitting."
-        )
-
-    if hip is not None:
-        lines.append(
-            f"• Lehenga bottom / palazzo: hip {hip:.1f} cm — allow 4–6 cm ease at hip line."
-        )
+    if gender == "male":
+        if chest is not None:
+            lines.append(
+                f"• Kurta / shirt: cut chest {round(chest + 10)}–{round(chest + 14)} cm "
+                f"(10–14 cm ease over {chest:.1f} cm)."
+            )
+            lines.append(
+                f"• Sherwani / Nehru jacket: structured chest ~{round(chest + 8)} cm with a clean shoulder line."
+            )
+        if waist is not None:
+            lines.append(
+                f"• Trousers / pyjama: waist {waist:.1f} cm — add 1–2 cm ease at the waistband."
+            )
+        garments = ["kurta", "shirt", "sherwani"] if chest else []
+    else:
+        if chest is not None:
+            ease_lo = round(chest + 5)
+            ease_hi = round(chest + 8)
+            lines.append(
+                f"• Fitted blouse / saree blouse: cut bust {ease_lo}–{ease_hi} cm "
+                f"(5–8 cm ease over {chest:.1f} cm)."
+            )
+            lines.append(
+                f"• Structured kurta: bust panel ~{round(chest + 10)} cm for comfortable movement."
+            )
+        if waist is not None:
+            lines.append(
+                f"• High-waist lehenga / skirt: waist {waist:.1f} cm — add 2–3 cm ease for sitting."
+            )
+        if hip is not None:
+            lines.append(
+                f"• Lehenga bottom / palazzo: hip {hip:.1f} cm — allow 4–6 cm ease at hip line."
+            )
+        garments = ["blouse", "kurta", "lehenga"] if chest else []
 
     if not lines:
         lines.append(
-            "Save at least bust or waist tape measurements to unlock tailored garment suggestions."
+            "Save at least chest/bust or waist tape measurements to unlock tailored garment suggestions."
         )
 
     return {
         "suggestions": "\n".join(lines),
         "source": "rules",
-        "garments": ["blouse", "kurta", "lehenga"] if bust else [],
+        "garments": garments,
     }
 
 
@@ -140,29 +179,38 @@ async def suggest_garments(
     *,
     calibrated: bool = False,
     context: str | None = None,
+    gender: str = "female",
+    garment: str | None = None,
 ) -> dict[str, Any]:
     """Proactive garment suggestions after scan or calibration."""
     meas_line = _fmt_measurements(measurements)
     prompt = (
+        f"Wearer: {gender}.\n"
         f"Body measurements: {meas_line}.\n"
         f"Calibrated with tape: {'yes' if calibrated else 'no'}.\n"
     )
+    if garment:
+        prompt += f"Designing a {garment}.\n"
     if context:
         prompt += f"Context: {context}\n"
-    prompt += "Suggest blouse, kurta, and lehenga options with ease in cm."
+    prompt += "Suggest gender-appropriate garment options with ease in cm."
 
-    text = await _call_anthropic(system=_SUGGEST_SYSTEM, user_text=prompt)
+    text = await _call_anthropic(
+        system=_suggest_system(gender, garment), user_text=prompt
+    )
     if text:
         return {"suggestions": text, "source": "llm", "garments": _extract_garments(text)}
 
-    out = _rule_suggest(measurements, calibrated=calibrated)
-    return out
+    return _rule_suggest(measurements, calibrated=calibrated, gender=gender)
 
 
 async def chat_reply(
     measurements: dict[str, Any],
     user_message: str,
     history: list[dict[str, str]] | None = None,
+    *,
+    gender: str = "female",
+    garment: str | None = None,
 ) -> dict[str, Any]:
     """Answer a follow-up sizing question."""
     hist_lines = []
@@ -172,13 +220,14 @@ async def chat_reply(
         if text:
             hist_lines.append(f"{role}: {text}")
 
-    prompt = f"Measurements: {_fmt_measurements(measurements)}\n"
+    prompt = f"Wearer: {gender}. Measurements: {_fmt_measurements(measurements)}\n"
     if hist_lines:
         prompt += "Conversation:\n" + "\n".join(hist_lines) + "\n"
     prompt += f"User: {user_message}\nAssistant:"
 
     text = await _call_anthropic(
-        system=_SUGGEST_SYSTEM + "\nAnswer the user's question in 2–4 short sentences.",
+        system=_suggest_system(gender, garment)
+        + "\nAnswer the user's question in 2–4 short sentences.",
         user_text=prompt,
     )
     if text:
@@ -190,7 +239,10 @@ async def chat_reply(
 def _extract_garments(text: str) -> list[str]:
     lower = text.lower()
     found = []
-    for g in ("blouse", "kurta", "lehenga", "saree", "salwar", "palazzo", "dress"):
+    for g in (
+        "blouse", "saree", "kurta", "lehenga", "salwar", "palazzo", "dress",
+        "shirt", "sherwani", "nehru jacket", "trousers",
+    ):
         if g in lower:
             found.append(g)
     return found[:5]

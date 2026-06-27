@@ -6,7 +6,6 @@ import '../../models/garment_catalog.dart';
 import '../../models/persona.dart';
 import '../../services/order_actions.dart';
 import '../../theme/swaya_light_theme.dart';
-import '../../widgets/garment_suggestion_sheet.dart';
 import 'app_chrome.dart';
 
 /// Persona detail — opens when a saved persona is tapped. Shows the persona's
@@ -48,13 +47,13 @@ class PersonaDetailScreen extends StatelessWidget {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () => showGarmentSuggestions(
-                    context,
-                    gender: persona.gender,
-                    measurements: persona.measurements,
-                  ),
+                  onPressed: () => context.push('/design-assistant', extra: {
+                    'gender': persona.gender,
+                    'measurements': persona.measurements,
+                    'personaName': persona.name,
+                  }),
                   icon: const Icon(Icons.auto_awesome, size: 18),
-                  label: const Text('Suggest'),
+                  label: const Text('Assistant'),
                 ),
               ),
               const SizedBox(width: 10),

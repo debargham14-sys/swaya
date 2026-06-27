@@ -8,7 +8,7 @@ import '../theme/swaya_light_theme.dart';
 /// Builds the body-girth payload the assistant expects from a persona's saved
 /// garment-fit measurements. We surface chest as both `chest` and `bust` so the
 /// backend's gendered rules pick the right one.
-Map<String, double> _girthsFrom(BlouseMeasurements m) {
+Map<String, double> girthsForAssistant(BlouseMeasurements m) {
   final v = m.values;
   final girths = <String, double>{};
   final chest = v['chest'] ?? v['upper_chest'] ?? v['below_chest'];
@@ -30,7 +30,7 @@ Future<void> showGarmentSuggestions(
   String? garment,
   AssistantApi? api,
 }) async {
-  final girths = _girthsFrom(measurements);
+  final girths = girthsForAssistant(measurements);
   if (girths.isEmpty) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()

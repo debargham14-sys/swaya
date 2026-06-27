@@ -11,6 +11,7 @@ import '../screens/app/add_measurements_screen.dart';
 import '../screens/app/avatar_screen.dart';
 import '../screens/app/capture_images_screen.dart';
 import '../screens/app/create_persona_screen.dart';
+import '../screens/app/garment_assistant_screen.dart';
 import '../screens/app/home_v2_screen.dart';
 import '../screens/app/manual_entry_screen.dart';
 import '../screens/app/orders_screen.dart';
@@ -103,6 +104,19 @@ GoRouter createAppRouter(AuthController auth) {
       GoRoute(
         path: '/measure',
         builder: (context, state) => const AddMeasurementsScreen(),
+      ),
+      GoRoute(
+        path: '/design-assistant',
+        builder: (context, state) {
+          final extra = (state.extra as Map?) ?? const {};
+          return GarmentAssistantScreen(
+            gender: extra['gender'] as String? ?? 'female',
+            measurements:
+                extra['measurements'] as BlouseMeasurements? ?? BlouseMeasurements(),
+            personaName: extra['personaName'] as String?,
+            garment: extra['garment'] as String?,
+          );
+        },
       ),
       GoRoute(
         path: '/avatar',

@@ -57,8 +57,9 @@ resource "aws_instance" "api" {
     dynamo_prefix          = var.dynamo_table_prefix
     s3_bucket              = var.s3_bucket_name
     auth_required          = var.auth_required
-    firebase_project_id    = var.firebase_project_id
-    firebase_ssm_parameter = var.firebase_ssm_parameter
+    firebase_project_id     = var.firebase_project_id
+    firebase_ssm_parameter  = var.firebase_ssm_parameter
+    anthropic_ssm_parameter = var.anthropic_ssm_parameter
   })
 
   # Pull the image only after it exists in ECR. (You still push the image before

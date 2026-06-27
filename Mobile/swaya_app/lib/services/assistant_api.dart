@@ -111,17 +111,39 @@ class AssistantApi {
     String gender = 'female',
     String? garment,
   }) async {
+    return _postChat({
+      'measurements': _measurementsPayload(measurements),
+      'message': message,
+      'history': history,
+      'gender': gender,
+      if (garment != null) 'garment': garment,
+    });
+  }
+
+  /// Interactive chat for the design flow, keyed off a persona's raw girth map.
+  /// The backend layers in the caller's orders + personas server-side.
+  Future<String> chatForGarment({
+    required Map<String, double> girthsCm,
+    required String message,
+    List<Map<String, String>> history = const [],
+    String gender = 'female',
+    String? garment,
+  }) async {
+    return _postChat({
+      'measurements': {'girths_cm': girthsCm, 'girths_in': const {}},
+      'message': message,
+      'history': history,
+      'gender': gender,
+      if (garment != null) 'garment': garment,
+    });
+  }
+
+  Future<String> _postChat(Map<String, dynamic> body) async {
     final res = await _client
         .post(
           _uri(AppConfig.assistantChatPath),
           headers: await authHeaders({'Content-Type': 'application/json'}),
-          body: jsonEncode({
-            'measurements': _measurementsPayload(measurements),
-            'message': message,
-            'history': history,
-            'gender': gender,
-            if (garment != null) 'garment': garment,
-          }),
+          body: jsonEncode(body),
         )
         .timeout(const Duration(seconds: 60));
 

@@ -106,3 +106,17 @@ variable "firebase_ssm_parameter" {
   type        = string
   default     = ""
 }
+
+variable "anthropic_ssm_parameter" {
+  description = <<-EOT
+    Name of an SSM Parameter Store SecureString holding the Anthropic API key
+    (must live under /<project>/...). The instance reads it at boot and injects
+    ANTHROPIC_API_KEY so the fit/design assistant uses Claude instead of the
+    rule-based fallback. Create it once, out-of-band:
+      aws ssm put-parameter --type SecureString \
+        --name /swaya-dsv/anthropic-api-key --value "sk-ant-..."
+    Empty = assistant stays on the rule-based fallback.
+  EOT
+  type        = string
+  default     = ""
+}

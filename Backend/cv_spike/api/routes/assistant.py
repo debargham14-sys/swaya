@@ -2,14 +2,45 @@
 
 from __future__ import annotations  # noqa: TC003 — pydantic on py3.9
 
+import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
 from pydantic import BaseModel, Field
 
+from api.auth import current_uid
+from api.db.dynamo import dynamo_available
 from api.services.assistant_service import chat_reply, llm_available, suggest_garments
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/v1/assistant", tags=["assistant"])
+
+
+def _user_context(uid: str) -> tuple[list, list]:
+    """The caller's orders + personas for the assistant to reason over.
+
+    Best-effort: if Dynamo is unreachable or the caller is anonymous, returns
+    empty lists so the assistant still works (just without order awareness).
+    """
+    if not uid or not dynamo_available():
+        return [], []
+    orders: list = []
+    personas: list = []
+    try:
+        from api.db.orders import OrderRepository
+
+        orders = OrderRepository().list(uid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("assistant: could not load orders: %s", exc)
+    try:
+        from api.db.personas import PersonaRepository
+
+        personas = PersonaRepository().list(uid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("assistant: could not load personas: %s", exc)
+    return orders, personas
 
 
 class MeasurementsContext(BaseModel):
@@ -48,18 +79,26 @@ def assistant_status() -> dict[str, Any]:
 
 
 @router.post("/suggest")
-async def suggest(body: SuggestRequest) -> dict[str, Any]:
+async def suggest(
+    body: SuggestRequest, uid: str = Depends(current_uid)
+) -> dict[str, Any]:
+    orders, personas = _user_context(uid)
     return await suggest_garments(
         body.measurements.model_dump(exclude_none=True),
         calibrated=body.calibrated,
         context=body.context,
         gender=body.gender,
         garment=body.garment,
+        orders=orders,
+        personas=personas,
     )
 
 
 @router.post("/chat")
-async def chat(body: ChatRequest) -> dict[str, Any]:
+async def chat(
+    body: ChatRequest, uid: str = Depends(current_uid)
+) -> dict[str, Any]:
+    orders, personas = _user_context(uid)
     hist = [{"role": m.role, "text": m.text} for m in body.history]
     return await chat_reply(
         body.measurements.model_dump(exclude_none=True),
@@ -67,4 +106,6 @@ async def chat(body: ChatRequest) -> dict[str, Any]:
         history=hist,
         gender=body.gender,
         garment=body.garment,
+        orders=orders,
+        personas=personas,
     )

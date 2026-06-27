@@ -39,6 +39,9 @@ def _suggest_system(gender: str, garment: str | None) -> str:
         f"{focus}"
         "Given body girth measurements in cm, suggest 2–3 specific garment types "
         "with practical cutting/ease notes for a tailor or shopper.\n"
+        "When the user's saved people (personas) or past orders are provided below, "
+        "use them: answer questions about their orders, avoid re-suggesting something "
+        "they already ordered, and tailor advice to the right person.\n"
         "Be concise (under 180 words). Use bullet points. Mention cm values from the scan.\n"
         "If measurements look incomplete, say what else is needed."
     )
@@ -58,6 +61,49 @@ def _fmt_measurements(m: dict[str, Any]) -> str:
     if calibrated:
         parts.append(f"(calibrated: {calibrated})")
     return ", ".join(parts) if parts else "no girths available"
+
+
+def _fmt_orders(orders: list[dict[str, Any]] | None) -> str:
+    """Compact summary of the user's recent orders for the LLM context."""
+    if not orders:
+        return ""
+    lines = []
+    for o in orders[:10]:
+        oid = o.get("id", "?")
+        garment = o.get("garment") or "garment"
+        status = o.get("status") or o.get("category") or "—"
+        placed = o.get("placed_on")
+        line = f"- {oid}: {garment} ({status}"
+        line += f", placed {placed})" if placed else ")"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _fmt_personas(personas: list[dict[str, Any]] | None) -> str:
+    """Compact summary of the user's saved people + key measurements."""
+    if not personas:
+        return ""
+    lines = []
+    for p in personas[:10]:
+        name = p.get("name") or "Unnamed"
+        gender = p.get("gender") or "female"
+        meas = p.get("measurements") or {}
+        keys = [k for k in ("chest", "bust", "waist", "hip") if meas.get(k)]
+        bits = ", ".join(f"{k} {meas[k]:.0f}cm" for k in keys)
+        lines.append(f"- {name} ({gender}){f': {bits}' if bits else ''}")
+    return "\n".join(lines)
+
+
+def _context_block(orders: list | None, personas: list | None) -> str:
+    """Build the 'what the assistant knows about this user' block, if any."""
+    parts = []
+    p = _fmt_personas(personas)
+    if p:
+        parts.append("The user's saved people (personas):\n" + p)
+    o = _fmt_orders(orders)
+    if o:
+        parts.append("The user's recent orders:\n" + o)
+    return "\n\n".join(parts)
 
 
 def _rule_suggest(
@@ -120,10 +166,20 @@ def _rule_suggest(
     }
 
 
-def _rule_chat(measurements: dict[str, Any], user_message: str) -> str:
+def _rule_chat(
+    measurements: dict[str, Any],
+    user_message: str,
+    orders: list[dict[str, Any]] | None = None,
+) -> str:
     lower = user_message.lower()
     g = measurements.get("girths_cm") or {}
     bust, waist, hip = g.get("bust"), g.get("waist"), g.get("hip")
+
+    if any(w in lower for w in ("order", "ordered", "delivery", "status", "track")):
+        if orders:
+            summary = _fmt_orders(orders)
+            return f"Here are your recent orders:\n{summary}"
+        return "You don't have any orders yet. Pick a garment to place your first one."
 
     if "blouse" in lower or "lehenga" in lower:
         if bust is not None:
@@ -181,6 +237,8 @@ async def suggest_garments(
     context: str | None = None,
     gender: str = "female",
     garment: str | None = None,
+    orders: list[dict[str, Any]] | None = None,
+    personas: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Proactive garment suggestions after scan or calibration."""
     meas_line = _fmt_measurements(measurements)
@@ -193,6 +251,9 @@ async def suggest_garments(
         prompt += f"Designing a {garment}.\n"
     if context:
         prompt += f"Context: {context}\n"
+    ctx = _context_block(orders, personas)
+    if ctx:
+        prompt += ctx + "\n"
     prompt += "Suggest gender-appropriate garment options with ease in cm."
 
     text = await _call_anthropic(
@@ -211,8 +272,10 @@ async def chat_reply(
     *,
     gender: str = "female",
     garment: str | None = None,
+    orders: list[dict[str, Any]] | None = None,
+    personas: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Answer a follow-up sizing question."""
+    """Answer a follow-up sizing question, with awareness of the user's orders."""
     hist_lines = []
     for msg in (history or [])[-6:]:
         role = msg.get("role", "user")
@@ -221,6 +284,9 @@ async def chat_reply(
             hist_lines.append(f"{role}: {text}")
 
     prompt = f"Wearer: {gender}. Measurements: {_fmt_measurements(measurements)}\n"
+    ctx = _context_block(orders, personas)
+    if ctx:
+        prompt += ctx + "\n"
     if hist_lines:
         prompt += "Conversation:\n" + "\n".join(hist_lines) + "\n"
     prompt += f"User: {user_message}\nAssistant:"
@@ -233,7 +299,10 @@ async def chat_reply(
     if text:
         return {"reply": text, "source": "llm"}
 
-    return {"reply": _rule_chat(measurements, user_message), "source": "rules"}
+    return {
+        "reply": _rule_chat(measurements, user_message, orders),
+        "source": "rules",
+    }
 
 
 def _extract_garments(text: str) -> list[str]:

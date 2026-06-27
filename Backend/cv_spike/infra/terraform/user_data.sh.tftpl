@@ -21,15 +21,32 @@ docker pull "${api_image}"
 # secret is created out-of-band, so it never lands in Terraform state). env-file
 # takes the whole line after '=' literally, so single-line JSON is safe.
 EXTRA_ENV=""
+umask 077
+: > /opt/swaya.env   # collect all secrets here; never echoed (set +x around reads)
+
 FIREBASE_PARAM="${firebase_ssm_parameter}"
 if [ -n "$FIREBASE_PARAM" ]; then
   set +x # don't echo the secret into the cloud-init log
   FB_JSON="$(aws ssm get-parameter --name "$FIREBASE_PARAM" --with-decryption \
     --query Parameter.Value --output text --region "${aws_region}" | tr -d '\n')"
-  umask 077
-  printf 'FIREBASE_SERVICE_ACCOUNT_JSON=%s\n' "$FB_JSON" > /opt/swaya.env
+  printf 'FIREBASE_SERVICE_ACCOUNT_JSON=%s\n' "$FB_JSON" >> /opt/swaya.env
   unset FB_JSON
   set -x
+fi
+
+# Anthropic API key (optional): activates the LLM-backed assistant. Without it the
+# assistant uses the rule-based fallback.
+ANTHROPIC_PARAM="${anthropic_ssm_parameter}"
+if [ -n "$ANTHROPIC_PARAM" ]; then
+  set +x
+  ANTHROPIC_KEY="$(aws ssm get-parameter --name "$ANTHROPIC_PARAM" --with-decryption \
+    --query Parameter.Value --output text --region "${aws_region}" | tr -d '\n')"
+  printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_KEY" >> /opt/swaya.env
+  unset ANTHROPIC_KEY
+  set -x
+fi
+
+if [ -s /opt/swaya.env ]; then
   EXTRA_ENV="--env-file /opt/swaya.env"
 fi
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -11,9 +12,29 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# LLM backend selection (in priority order):
+#   1. Amazon Bedrock — set BEDROCK_MODEL_ID (e.g. "amazon.nova-lite-v1:0").
+#      Called via the instance IAM role — no API key. The cheapest option.
+#   2. Anthropic first-party API — set ANTHROPIC_API_KEY.
+#   3. Rule-based fallback — neither configured.
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "").strip()
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1").strip()
+
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+
+_bedrock_client = None
+
+
+def _get_bedrock():
+    """Lazily create a cached bedrock-runtime client (uses the instance role)."""
+    global _bedrock_client
+    if _bedrock_client is None:
+        import boto3
+
+        _bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+    return _bedrock_client
 
 # Gender-appropriate garment vocabularies used to steer the LLM and the
 # rule-based fallback. Female is the original India-centric set; male adds
@@ -48,7 +69,7 @@ def _suggest_system(gender: str, garment: str | None) -> str:
 
 
 def llm_available() -> bool:
-    return bool(ANTHROPIC_API_KEY)
+    return bool(BEDROCK_MODEL_ID or ANTHROPIC_API_KEY)
 
 
 def _fmt_measurements(m: dict[str, Any]) -> str:
@@ -198,13 +219,49 @@ def _rule_chat(
     )
 
 
+def _invoke_bedrock_sync(system: str, user_text: str, max_tokens: int) -> str | None:
+    """Blocking Bedrock converse call — run via asyncio.to_thread."""
+    resp = _get_bedrock().converse(
+        modelId=BEDROCK_MODEL_ID,
+        system=[{"text": system}],
+        messages=[{"role": "user", "content": [{"text": user_text}]}],
+        inferenceConfig={"maxTokens": max_tokens, "temperature": 0.6},
+    )
+    blocks = (resp.get("output", {}).get("message", {}) or {}).get("content") or []
+    texts = [b["text"] for b in blocks if b.get("text")]
+    return "\n".join(texts).strip() if texts else None
+
+
+async def _call_bedrock(*, system: str, user_text: str, max_tokens: int) -> str | None:
+    try:
+        return await asyncio.to_thread(
+            _invoke_bedrock_sync, system, user_text, max_tokens
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("assistant Bedrock call failed: %s", exc)
+        return None
+
+
+async def _call_llm(*, system: str, user_text: str, max_tokens: int = 512) -> str | None:
+    """Dispatch to the configured LLM backend; None -> use the rule fallback."""
+    if BEDROCK_MODEL_ID:
+        return await _call_bedrock(
+            system=system, user_text=user_text, max_tokens=max_tokens
+        )
+    if ANTHROPIC_API_KEY:
+        return await _call_anthropic(
+            system=system, user_text=user_text, max_tokens=max_tokens
+        )
+    return None
+
+
 async def _call_anthropic(
     *,
     system: str,
     user_text: str,
     max_tokens: int = 512,
 ) -> str | None:
-    if not llm_available():
+    if not ANTHROPIC_API_KEY:
         return None
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
@@ -256,7 +313,7 @@ async def suggest_garments(
         prompt += ctx + "\n"
     prompt += "Suggest gender-appropriate garment options with ease in cm."
 
-    text = await _call_anthropic(
+    text = await _call_llm(
         system=_suggest_system(gender, garment), user_text=prompt
     )
     if text:
@@ -291,7 +348,7 @@ async def chat_reply(
         prompt += "Conversation:\n" + "\n".join(hist_lines) + "\n"
     prompt += f"User: {user_message}\nAssistant:"
 
-    text = await _call_anthropic(
+    text = await _call_llm(
         system=_suggest_system(gender, garment)
         + "\nAnswer the user's question in 2–4 short sentences.",
         user_text=prompt,

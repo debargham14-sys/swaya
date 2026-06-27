@@ -89,6 +89,18 @@ data "aws_iam_policy_document" "api" {
       values   = ["ssm.${var.aws_region}.amazonaws.com"]
     }
   }
+
+  # Invoke Bedrock foundation models for the fit/design assistant (Amazon Nova,
+  # Claude, etc.). Scoped to foundation models in this region; the specific model
+  # is chosen via the BEDROCK_MODEL_ID env var so no IAM change is needed to switch.
+  statement {
+    sid     = "BedrockInvoke"
+    actions = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
+    resources = [
+      "arn:aws:bedrock:${var.aws_region}::foundation-model/*",
+      "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "api" {

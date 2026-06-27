@@ -60,6 +60,7 @@ resource "aws_instance" "api" {
     firebase_project_id     = var.firebase_project_id
     firebase_ssm_parameter  = var.firebase_ssm_parameter
     anthropic_ssm_parameter = var.anthropic_ssm_parameter
+    bedrock_model_id        = var.bedrock_model_id
   })
 
   # Pull the image only after it exists in ECR. (You still push the image before

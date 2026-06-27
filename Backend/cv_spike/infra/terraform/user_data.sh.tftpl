@@ -62,4 +62,5 @@ docker run -d --name swaya-api --restart always -p 8000:8000 \
   -e ENABLE_QC=0 \
   -e AUTH_REQUIRED="${auth_required}" \
   -e FIREBASE_PROJECT_ID="${firebase_project_id}" \
+  -e BEDROCK_MODEL_ID="${bedrock_model_id}" \
   "${api_image}"

@@ -107,6 +107,17 @@ variable "firebase_ssm_parameter" {
   default     = ""
 }
 
+variable "bedrock_model_id" {
+  description = <<-EOT
+    Amazon Bedrock model id for the fit/design assistant, injected as
+    BEDROCK_MODEL_ID. The instance calls Bedrock via its IAM role — no API key.
+    Cheapest options (us-east-1): "amazon.nova-lite-v1:0" (recommended) or
+    "amazon.nova-micro-v1:0". Empty = fall back to ANTHROPIC_API_KEY, then rules.
+  EOT
+  type        = string
+  default     = "amazon.nova-lite-v1:0"
+}
+
 variable "anthropic_ssm_parameter" {
   description = <<-EOT
     Name of an SSM Parameter Store SecureString holding the Anthropic API key

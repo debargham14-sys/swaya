@@ -131,6 +131,48 @@ class _ProfileV2ScreenState extends State<ProfileV2Screen> {
                 ),
               ),
           const SizedBox(height: 24),
+          const SectionTitle('Design with us'),
+          const SizedBox(height: 12),
+          AppCard(
+            onTap: () => context.push('/collaborations'),
+            child: Row(
+              children: const [
+                Icon(Icons.handshake_outlined, color: SwayaLight.accent),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text('My collaborations',
+                      style: TextStyle(
+                          color: SwayaLight.inkPrimary,
+                          fontWeight: FontWeight.w600)),
+                ),
+                Icon(Icons.chevron_right, color: SwayaLight.inkTertiary),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          AppCard(
+            onTap: () => context.go(
+                auth.isDesigner ? '/designer/home' : '/designer/register'),
+            child: Row(
+              children: [
+                Icon(
+                    auth.isDesigner
+                        ? Icons.storefront_outlined
+                        : Icons.design_services_outlined,
+                    color: SwayaLight.inkSecondary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                      auth.isDesigner ? 'Designer studio' : 'Become a designer',
+                      style: const TextStyle(
+                          color: SwayaLight.inkPrimary,
+                          fontWeight: FontWeight.w600)),
+                ),
+                const Icon(Icons.chevron_right, color: SwayaLight.inkTertiary),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
           OutlinedButton.icon(
             onPressed: () async {
               await auth.signOut();

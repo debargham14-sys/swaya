@@ -15,4 +15,6 @@ class AppConfig {
   static const String personasPath = '/v1/personas';
   static const String userSyncPath = '/v1/users/me';
   static const String ordersPath = '/v1/orders';
+  static const String designersPath = '/v1/designers';
+  static const String collabPath = '/v1/collab';
 }

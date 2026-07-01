@@ -37,4 +37,21 @@ class UsersApi {
       return false;
     }
   }
+
+  /// Register this device's FCM token so the backend can push notifications
+  /// (collab invites/messages). Best-effort; never throws.
+  Future<bool> registerFcmToken(String token) async {
+    try {
+      final res = await _client
+          .post(
+            Uri.parse('$_baseUrl${AppConfig.userSyncPath}/fcm-token'),
+            headers: await authHeaders({'Content-Type': 'application/json'}),
+            body: jsonEncode({'token': token}),
+          )
+          .timeout(const Duration(seconds: 20));
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (_) {
+      return false;
+    }
+  }
 }

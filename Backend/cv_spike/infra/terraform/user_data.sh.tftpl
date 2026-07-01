@@ -50,9 +50,23 @@ if [ -s /opt/swaya.env ]; then
   EXTRA_ENV="--env-file /opt/swaya.env"
 fi
 
+# Workload Identity Federation config (non-secret): lets the instance role
+# impersonate the Firebase Admin SA to send FCM without a downloaded key. Write it
+# to the host and mount it read-only into the container; google-auth reads it via
+# GOOGLE_APPLICATION_CREDENTIALS and fetches instance creds from IMDSv2 (hop limit
+# 2 is set on the instance so the container can reach the metadata endpoint).
+WIF_MOUNT=""
+WIF_JSON='${wif_config_json}'
+if [ -n "$WIF_JSON" ]; then
+  printf '%s' "$WIF_JSON" > /opt/swaya-wif.json
+  chmod 0644 /opt/swaya-wif.json
+  WIF_MOUNT="-v /opt/swaya-wif.json:/opt/swaya-wif.json:ro -e GOOGLE_APPLICATION_CREDENTIALS=/opt/swaya-wif.json"
+fi
+
 docker rm -f swaya-api 2>/dev/null || true
 docker run -d --name swaya-api --restart always -p 8000:8000 \
   $EXTRA_ENV \
+  $WIF_MOUNT \
   -e AWS_REGION="${aws_region}" \
   -e DYNAMO_TABLE_PREFIX="${dynamo_prefix}" \
   -e S3_BUCKET="${s3_bucket}" \

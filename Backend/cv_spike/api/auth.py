@@ -160,3 +160,19 @@ def require_user(request: Request) -> dict:
 def current_uid(claims: dict = Depends(require_user)) -> str:
     """Convenience dependency yielding just the Firebase uid string."""
     return str(claims.get("uid") or claims.get("user_id") or "")
+
+
+def require_designer(uid: str = Depends(current_uid)) -> str:
+    """Dependency for designer-only routes.
+
+    A uid is a designer iff it has a registered profile in the ``designers``
+    table. Raises 403 otherwise. Returns the designer's uid.
+    """
+    from api.db.designers import DesignerRepository
+
+    if not uid or not DesignerRepository().is_designer(uid):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Designer profile required for this action.",
+        )
+    return uid

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../models/avatar_design.dart';
 import '../models/blouse_measurements.dart';
+import '../models/designer.dart';
 import '../models/measurement_result.dart';
 import '../providers/auth_controller.dart';
 import '../screens/auth/login_screen.dart';
@@ -10,9 +12,15 @@ import '../screens/auth/reset_password_screen.dart';
 import '../screens/app/add_measurements_screen.dart';
 import '../screens/app/avatar_screen.dart';
 import '../screens/app/capture_images_screen.dart';
+import '../screens/app/collaborations_screen.dart';
 import '../screens/app/create_persona_screen.dart';
+import '../screens/app/designer_directory_screen.dart';
+import '../screens/app/designer_profile_screen.dart';
 import '../screens/app/garment_assistant_screen.dart';
 import '../screens/app/home_v2_screen.dart';
+import '../screens/collab/collab_avatar_screen.dart';
+import '../screens/designer/designer_home_screen.dart';
+import '../screens/designer/designer_register_screen.dart';
 import '../screens/app/manual_entry_screen.dart';
 import '../screens/app/orders_screen.dart';
 import '../screens/app/persona_detail_screen.dart';
@@ -56,13 +64,19 @@ GoRouter createAppRouter(AuthController auth) {
           auth.status == AuthStatus.unconfigured) {
         return null;
       }
-      final loggingIn = _authRoutes.contains(state.matchedLocation);
+      final loc = state.matchedLocation;
+      final loggingIn = _authRoutes.contains(loc);
       if (!auth.isSignedIn) {
         return loggingIn ? null : '/auth';
       }
-      // Signed in but sitting on an auth/splash screen → send into the app
-      // (new light Home from the Figma redesign).
-      if (loggingIn || state.matchedLocation == '/') {
+      // Signed in. Designers *land* in their console on login; everyone else in
+      // the consumer Home. This only governs the post-login landing — designers
+      // are also shoppers, so they may freely visit '/home-v2' afterwards (the
+      // console has a "switch to shopping" action). Non-designers, however, must
+      // never sit on the designer console.
+      final landing = auth.isDesigner ? '/designer/home' : '/home-v2';
+      if (loggingIn || loc == '/') return landing;
+      if (!auth.isDesigner && auth.roleResolved && loc == '/designer/home') {
         return '/home-v2';
       }
       return null;
@@ -131,6 +145,49 @@ GoRouter createAppRouter(AuthController auth) {
           }
           return const AvatarScreen();
         },
+      ),
+      // --- Designer collaboration ---
+      GoRoute(
+        path: '/designers',
+        builder: (context, state) {
+          final extra = (state.extra as Map?) ?? const {};
+          return DesignerDirectoryScreen(
+              seed: extra['seed'] as AvatarDesign?);
+        },
+      ),
+      GoRoute(
+        path: '/designers/:id',
+        builder: (context, state) {
+          final extra = (state.extra as Map?) ?? const {};
+          return DesignerProfileScreen(
+            designerId: state.pathParameters['id']!,
+            initial: extra['designer'] as Designer?,
+            seed: extra['seed'] as AvatarDesign?,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/collaborations',
+        builder: (context, state) => const CollaborationsScreen(),
+      ),
+      GoRoute(
+        path: '/collab/:id',
+        builder: (context, state) {
+          final extra = (state.extra as Map?) ?? const {};
+          return CollabAvatarScreen(
+            sessionId: state.pathParameters['id']!,
+            role: extra['role'] as String? ?? 'user',
+            seed: extra['seed'] as AvatarDesign?,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/designer/home',
+        builder: (context, state) => const DesignerHomeScreen(),
+      ),
+      GoRoute(
+        path: '/designer/register',
+        builder: (context, state) => const DesignerRegisterScreen(),
       ),
       GoRoute(
         path: '/measure/manual',

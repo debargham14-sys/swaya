@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
 
+import '../../models/avatar_design.dart';
 import '../../models/blouse_measurements.dart';
 import '../../theme/swaya_light_theme.dart';
 import '../../widgets/avatar/garment_recolor.dart';
@@ -182,6 +184,20 @@ class _AvatarScreenState extends State<AvatarScreen> {
       title: '3D Try-On',
       showBack: true,
       showNav: false,
+      trailing: IconButton(
+        tooltip: 'Collaborate with a designer',
+        icon: const Icon(Icons.handshake_outlined, size: 22),
+        onPressed: () => context.push('/designers', extra: {
+          'seed': AvatarDesign(
+            gender: _gender,
+            colorIndex: _color,
+            sleeves: _sleeves,
+            watch: _watch,
+            pants: _pants,
+            measurements: widget.measurements,
+          ),
+        }),
+      ),
       body: Column(
         children: [
           // Avatar canvas — rounded, surface-filled, matches the AppCard idiom.

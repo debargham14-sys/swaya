@@ -15,5 +15,8 @@ locals {
     users            = "uid"
     personas         = "persona_id"
     orders           = "order_id"
+    designers        = "designer_id"
+    collab_sessions  = "session_id"
+    collab_messages  = "message_id"
   }
 }

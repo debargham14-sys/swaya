@@ -5,6 +5,7 @@ import 'providers/auth_controller.dart';
 import 'providers/capture_session.dart';
 import 'providers/measurement_draft.dart';
 import 'router/app_router.dart';
+import 'services/push_service.dart';
 import 'theme/swaya_theme.dart';
 
 class SwayaApp extends StatefulWidget {
@@ -41,6 +42,7 @@ class _SwayaAppState extends State<SwayaApp> {
       child: MaterialApp.router(
         title: 'DSV',
         debugShowCheckedModeBanner: false,
+        scaffoldMessengerKey: rootMessengerKey,
         theme: buildSwayaTheme(),
         themeMode: ThemeMode.dark,
         routerConfig: _router,

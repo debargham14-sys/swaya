@@ -51,3 +51,19 @@ def get_me(uid: str = Depends(current_uid)) -> dict:
     if not doc:
         raise HTTPException(status_code=404, detail="User record not found.")
     return doc
+
+
+class FcmTokenBody(BaseModel):
+    token: str
+
+
+@router.post("/me/fcm-token")
+def register_fcm_token(body: FcmTokenBody, uid: str = Depends(current_uid)) -> dict:
+    """Register this device's FCM token so the user can receive push notifications."""
+    _require_db()
+    if not uid:
+        raise HTTPException(status_code=401, detail="No user id in token.")
+    if not body.token.strip():
+        raise HTTPException(status_code=400, detail="Empty token.")
+    tokens = UserRepository().add_fcm_token(uid, body.token.strip())
+    return {"ok": True, "device_count": len(tokens)}

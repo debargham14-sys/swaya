@@ -48,6 +48,8 @@ from api.forms import (  # noqa: E402
     save_upload,
 )
 from api.routes.calibration import router as calibration_router  # noqa: E402
+from api.routes.collab import router as collab_router  # noqa: E402
+from api.routes.designers import router as designers_router  # noqa: E402
 from api.routes.orders import router as orders_router  # noqa: E402
 from api.routes.personas import router as personas_router  # noqa: E402
 from api.routes.scans import router as scans_router  # noqa: E402
@@ -81,6 +83,8 @@ app.include_router(vest_router)
 app.include_router(users_router)
 app.include_router(personas_router)
 app.include_router(orders_router)
+app.include_router(designers_router)
+app.include_router(collab_router)
 
 if _ENABLE_QC:
     from api.routes.qc import router as qc_router  # noqa: E402

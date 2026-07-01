@@ -52,16 +52,29 @@ resource "aws_instance" "api" {
   key_name               = var.key_name != "" ? var.key_name : null
 
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    api_image              = local.api_image
-    aws_region             = var.aws_region
-    dynamo_prefix          = var.dynamo_table_prefix
-    s3_bucket              = var.s3_bucket_name
-    auth_required          = var.auth_required
+    api_image               = local.api_image
+    aws_region              = var.aws_region
+    dynamo_prefix           = var.dynamo_table_prefix
+    s3_bucket               = var.s3_bucket_name
+    auth_required           = var.auth_required
     firebase_project_id     = var.firebase_project_id
     firebase_ssm_parameter  = var.firebase_ssm_parameter
     anthropic_ssm_parameter = var.anthropic_ssm_parameter
     bedrock_model_id        = var.bedrock_model_id
+    # Non-secret Workload Identity Federation config: lets the instance role
+    # impersonate the Firebase Admin SA to SEND FCM (no downloaded key). Empty
+    # string disables the wiring (falls back to FIREBASE_SERVICE_ACCOUNT_JSON).
+    wif_config_json = var.enable_fcm_wif ? file("${path.module}/wif/firebase-wif.json") : ""
   })
+
+  # WIF from inside the Docker container reads EC2 IMDSv2. The container sits one
+  # NAT hop off the host, so the default hop limit of 1 blocks it — require IMDSv2
+  # and raise the hop limit to 2 so the containerized app can fetch instance creds.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
 
   # Pull the image only after it exists in ECR. (You still push the image before
   # apply — see push_image.sh — but this orders repo creation before the box.)

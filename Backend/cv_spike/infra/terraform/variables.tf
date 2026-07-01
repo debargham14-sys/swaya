@@ -107,6 +107,20 @@ variable "firebase_ssm_parameter" {
   default     = ""
 }
 
+variable "enable_fcm_wif" {
+  description = <<-EOT
+    Enable Workload Identity Federation for sending FCM push notifications. When
+    true, the instance role impersonates the Firebase Admin SA via the WIF config
+    at infra/terraform/wif/firebase-wif.json (non-secret) — no downloaded key and
+    no org-policy exception needed. The container reads it via
+    GOOGLE_APPLICATION_CREDENTIALS. Requires the metadata hop limit of 2 (set on
+    the instance) so the container can reach IMDSv2. Leave false to disable push
+    or to use firebase_ssm_parameter (a real key) instead.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "bedrock_model_id" {
   description = <<-EOT
     Amazon Bedrock model id for the fit/design assistant, injected as

@@ -79,6 +79,41 @@ class HomeV2Screen extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(height: 12),
+          AppCard(
+            onTap: () => context.push('/collaborations'),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: SwayaLight.accent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.handshake_outlined,
+                      color: SwayaLight.accent, size: 22),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Collaborate with a designer',
+                          style: TextStyle(
+                              color: SwayaLight.inkPrimary,
+                              fontWeight: FontWeight.w600)),
+                      SizedBox(height: 2),
+                      Text('Design your blouse together, live',
+                          style: TextStyle(
+                              color: SwayaLight.inkSecondary, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, color: SwayaLight.inkTertiary),
+              ],
+            ),
+          ),
           const SizedBox(height: 24),
           const SectionTitle('Quick Actions'),
           const SizedBox(height: 12),

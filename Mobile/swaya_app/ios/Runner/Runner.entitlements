@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push Notifications capability. "development" pairs with a development
+	     signing profile (direct device installs / internal testing). Xcode/Apple
+	     promote this to the production APNs environment for App Store / TestFlight
+	     builds automatically. Required for FCM registration on iOS. -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>
